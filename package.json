@@ -22,7 +22,9 @@
     "test": "node --run pre-test && vitest --run",
     "prettier": "prettier --write \"*.{mjs,cjs,js,json,scss,ts,tsx}\" \"public/**/*.{mjs,cjs,js,json,scss,ts,tsx}\" \"src/**/*.{mjs,cjs,js,json,scss,ts,tsx}\" \"tools/**/*.{mjs,cjs,js,json,scss,ts,tsx}\"",
     "cli": "tsx src/cli/main.ts",
-    "play": "tsx src/cli/main.ts"
+    "play": "tsx src/cli/main.ts",
+    "web": "vite",
+    "web:build": "vite build"
   },
   "type": "module",
   "dependencies": {
