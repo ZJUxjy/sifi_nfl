@@ -1,7 +1,7 @@
 import { generateAllTeams } from '../worker/core/team/index';
-import { SeasonManager } from '../worker/core/season/index';
+import { UnifiedSeasonManager, formatLeagueName, type StandingsEntry } from '../worker/core/league/index';
 import { GameSim } from '../worker/core/game/GameSim';
-import type { Team, Player } from '../common/entities';
+import type { Team, Player, ScheduleGame } from '../common/entities';
 import type { TeamGameSim, PlayerGameSim } from '../worker/core/game/types';
 import { calculateCompositeRatings } from '../worker/core/player/ovr';
 import { listSaves, saveGame, loadGame, formatDate, type SaveData } from './saveManager';
@@ -67,7 +67,7 @@ class SIFINFLGame {
   players: Player[] = [];
   freeAgents: Player[] = [];
   draftProspects: DraftProspect[] = [];
-  season: SeasonManager | null = null;
+  season: UnifiedSeasonManager | null = null;
   userTeam: Team | null = null;
   seasonYear: number = 2025;
   lastGameInfo: LastGameInfo | null = null;
@@ -188,8 +188,8 @@ class SIFINFLGame {
     console.log(chalk.green(`\nWelcome, GM of ${team.name}!\n`));
     console.log(`Market: ${team.market || 'medium'} | Budget: $${(team.budget / 1000).toFixed(0)}M | Cash: $${(team.cash / 1000).toFixed(0)}M\n`);
 
-    this.season = new SeasonManager(this.seasonYear, this.teams);
-    this.season.startRegularSeason();
+    this.season = new UnifiedSeasonManager(this.seasonYear, this.teams);
+    this.season.startSeason();
     
     await this.gameMenu();
   }
@@ -234,8 +234,8 @@ class SIFINFLGame {
     console.log('  Bottom 8 teams go to Relegation Group');
     console.log('  Playoffs: Top 8 teams, double elimination\n');
 
-    this.season = new SeasonManager(this.seasonYear, this.teams);
-    this.season.startRegularSeason();
+    this.season = new UnifiedSeasonManager(this.seasonYear, this.teams);
+    this.season.startSeason();
     
     await this.gameMenu();
   }
@@ -287,8 +287,8 @@ class SIFINFLGame {
     console.log('  Top 3 teams promoted each season');
     console.log('  Bottom 3 teams relegated each season\n');
 
-    this.season = new SeasonManager(this.seasonYear, this.teams);
-    this.season.startRegularSeason();
+    this.season = new UnifiedSeasonManager(this.seasonYear, this.teams);
+    this.season.startSeason();
     
     await this.gameMenu();
   }
@@ -432,8 +432,9 @@ class SIFINFLGame {
       colWidths: [8, 35, 20]
     });
 
+    const schedule = this.season!.getRegionSchedule(this.userTeam!.region);
     for (let week = 1; week <= 17; week++) {
-      const game = this.season.schedule.find(g => 
+      const game = schedule.find((g: ScheduleGame) => 
         g.day === week && (g.homeTid === this.userTeam!.tid || g.awayTid === this.userTeam!.tid)
       );
 
@@ -465,15 +466,14 @@ class SIFINFLGame {
   async viewStandings() {
     if (!this.season) return;
 
-    const standings = this.season.getStandings();
-    const regionStandings = standings.filter(s => s.region === this.userTeam!.region);
+    const regionStandings = this.season.getRegionStandings(this.userTeam!.region);
 
     const table = new Table({
       head: ['Team', 'W', 'L', 'Pct', 'PF', 'PA', 'Strk'],
       colWidths: [25, 6, 6, 8, 8, 8, 8]
     });
 
-    regionStandings.forEach(s => {
+    regionStandings.forEach((s: StandingsEntry) => {
       const team = this.teams.find(t => t.tid === s.tid);
       const winPct = (s.won / (s.won + s.lost || 1)).toFixed(3);
       const isUser = s.tid === this.userTeam!.tid;
@@ -497,8 +497,10 @@ class SIFINFLGame {
   async playWeek() {
     if (!this.season) return;
 
-    const weekGames = this.season.schedule.filter(g => g.day === this.season!.currentWeek);
-    const userGame = weekGames.find(g => 
+    const schedule = this.season.getRegionSchedule(this.userTeam!.region);
+    const currentWeek = this.season.getRegionCurrentWeek(this.userTeam!.region);
+    const weekGames = schedule.filter((g: ScheduleGame) => g.day === currentWeek);
+    const userGame = weekGames.find((g: ScheduleGame) => 
       g.homeTid === this.userTeam!.tid || g.awayTid === this.userTeam!.tid
     );
 
@@ -515,11 +517,11 @@ class SIFINFLGame {
     );
 
     console.log(`${chalk.bold(this.userTeam!.name)} ${isHome ? 'vs' : '@'} ${chalk.bold(opponent!.name)}`);
-    console.log(`Week ${this.season.currentWeek}, ${this.seasonYear}\n`);
+    console.log(`Week ${currentWeek}, ${this.seasonYear}\n`);
 
     await this.simulateGame(userGame, isHome);
     
-    this.season.simWeek();
+    this.season.simWeek(this.userTeam!.region);
   }
 
   async simulateGame(game: any, isHome: boolean) {
@@ -613,9 +615,10 @@ class SIFINFLGame {
   async simWeek() {
     if (!this.season) return;
 
-    const spinner = ora(`Simulating Week ${this.season.currentWeek}...`).start();
-    this.season.simWeek();
-    spinner.succeed(`Week ${this.season.currentWeek - 1} complete!`);
+    const currentWeek = this.season.getRegionCurrentWeek(this.userTeam!.region);
+    const spinner = ora(`Simulating Week ${currentWeek}...`).start();
+    this.season.simWeek(this.userTeam!.region);
+    spinner.succeed(`Week ${currentWeek} complete!`);
 
     const recoveredPlayers: string[] = [];
     for (const player of this.players) {
@@ -632,8 +635,9 @@ class SIFINFLGame {
       console.log(chalk.green(`\n🏥 Recovered from injury: ${recoveredPlayers.join(', ')}\n`));
     }
 
-    const userGame = this.season.schedule.find(g => 
-      g.day === this.season!.currentWeek - 1 && 
+    const schedule = this.season.getRegionSchedule(this.userTeam!.region);
+    const userGame = schedule.find((g: ScheduleGame) => 
+      g.day === currentWeek && 
       (g.homeTid === this.userTeam!.tid || g.awayTid === this.userTeam!.tid)
     );
 
@@ -1645,7 +1649,7 @@ class SIFINFLGame {
 
       if (!start) return;
 
-      const standings = this.season?.getStandings() || [];
+      const standings = this.season?.getAllStandings() || [];
       const qualified = qualifyForImperialCup(this.teams, standings);
       const matches = generateImperialCupBracket(qualified);
 
@@ -1819,9 +1823,9 @@ class SIFINFLGame {
       players: this.players,
       freeAgents: this.freeAgents,
       seasonYear: this.seasonYear,
-      currentWeek: this.season.currentWeek,
-      schedule: this.season.schedule,
-      standings: this.season.getStandings(),
+      currentWeek: this.season.getRegionCurrentWeek(this.userTeam.region),
+      schedule: this.season.getRegionSchedule(this.userTeam.region),
+      standings: this.season.getAllStandings(),
       userTeamTid: this.userTeam.tid,
     };
 
@@ -1873,15 +1877,13 @@ class SIFINFLGame {
     this.players = save.data.players as Player[];
     this.freeAgents = save.data.freeAgents || [];
     this.seasonYear = save.data.seasonYear;
-    this.season = new SeasonManager(this.seasonYear, this.teams);
-    this.season.startRegularSeason();
-    this.season.currentWeek = save.data.currentWeek;
-    this.season.schedule = save.data.schedule;
+    this.season = new UnifiedSeasonManager(this.seasonYear, this.teams);
+    this.season.startSeason();
     this.userTeam = this.teams.find(t => t.tid === save.data.userTeamTid) || null;
 
     spinner.succeed(`Loaded: ${save.name}`);
     console.log(chalk.green(`\nWelcome back, GM of ${this.userTeam?.name}!\n`));
-    console.log(`Week ${this.season.currentWeek} | Season ${this.seasonYear}\n`);
+    console.log(`Week ${this.season.getRegionCurrentWeek(this.userTeam?.region || 'firstContinent')} | Season ${this.seasonYear}\n`);
 
     await this.gameMenu();
   }
