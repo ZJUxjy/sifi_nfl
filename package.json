@@ -1,0 +1,72 @@
+{
+  "name": "sifi-nfl",
+  "version": "0.1.0",
+  "description": "Sci-Fi American Football Manager Game",
+  "homepage": "https://github.com/sifi-nfl/game",
+  "bugs": {
+    "url": "https://github.com/sifi-nfl/game/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sifi-nfl/game.git"
+  },
+  "author": "SIFI NFL Team",
+  "scripts": {
+    "dev": "node --run build && node tools/watch/cli.ts",
+    "build": "node tools/build/cli.ts",
+    "preview": "node tools/preview.ts",
+    "lint": "concurrently --raw \"node --run lint-js\" \"node --run lint-ts\"",
+    "lint-js": "node --run pre-test && eslint",
+    "lint-ts": "node --run pre-test && tsc",
+    "pre-test": "node tools/pre-test.ts",
+    "test": "node --run pre-test && vitest --run",
+    "prettier": "prettier --write \"*.{mjs,cjs,js,json,scss,ts,tsx}\" \"public/**/*.{mjs,cjs,js,json,scss,ts,tsx}\" \"src/**/*.{mjs,cjs,js,json,scss,ts,tsx}\" \"tools/**/*.{mjs,cjs,js,json,scss,ts,tsx}\"",
+    "cli": "tsx src/cli/main.ts",
+    "play": "tsx src/cli/main.ts"
+  },
+  "type": "module",
+  "dependencies": {
+    "@dumbmatter/idb": "8.0.0",
+    "chalk": "^5.3.0",
+    "cli-table3": "^0.6.3",
+    "clsx": "2.1.1",
+    "commander": "^11.1.0",
+    "confetti-js": "0.0.18",
+    "d3-dsv": "3.0.1",
+    "fast-deep-equal": "3.1.3",
+    "inquirer": "^9.2.12",
+    "match-sorter": "8.2.0",
+    "nanoevents": "9.1.0",
+    "ora": "^7.0.1",
+    "react": "^19.2.4",
+    "react-addons-text-content": "0.0.4",
+    "react-bootstrap": "2.10.10",
+    "react-confirm": "0.5.0-1",
+    "react-dom": "^19.2.4",
+    "react-select": "5.10.2",
+    "s-ago": "2.2.0",
+    "streamsaver": "2.0.6",
+    "use-local-storage-state": "19.5.0",
+    "use-sync-external-store": "1.6.0",
+    "zustand": "5.0.11"
+  },
+  "devDependencies": {
+    "@types/d3-dsv": "3.0.7",
+    "@types/inquirer": "^9.0.7",
+    "@types/node": "^25.2.1",
+    "@types/react": "^19.2.13",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.2.1",
+    "eslint": "^9.39.2",
+    "jsdom": "^28.0.0",
+    "prettier": "^3.8.1",
+    "tsx": "^4.0.0",
+    "typescript": "^5.9.3",
+    "vite": "^6.0.0",
+    "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
