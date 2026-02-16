@@ -1,8 +1,9 @@
-import type { Player } from '../../../common/entities';
-import type { Region } from '../../../common/types';
+import type { Player } from '@common/entities';
+import type { Region, DraftPick } from '@common/types';
 import { generate, generatePotential } from '../player/generate';
 import { calculateBaseSalary } from '../contract/negotiation';
-import { REGION_LEAGUE_STRUCTURE, ORIGIN_DRAFT_ELIGIBILITY } from '../../../common/constants.football';
+import { REGION_LEAGUE_STRUCTURE, ORIGIN_DRAFT_ELIGIBILITY } from '@common/constants.football';
+import { truncGauss } from '@common/random';
 
 export interface DraftProspect extends Player {
   projectedRound: number;
@@ -16,10 +17,14 @@ export interface DraftProspect extends Player {
 
 export function generateDraftPool(season: number, numPlayers: number = 224): DraftProspect[] {
   const prospects: DraftProspect[] = [];
-  
+
+  // Use season-based offset to create unique PIDs (e.g., season 2025 -> PIDs start at 2025000)
+  let pid = season * 10000;
+
   for (let i = 0; i < numPlayers; i++) {
     const age = Math.random() < 0.7 ? 21 : 22;
     const prospect = generate(undefined, age, season, undefined, 0) as DraftProspect;
+    prospect.pid = pid++;
     
     prospect.draft.year = season;
     prospect.draft.round = 0;

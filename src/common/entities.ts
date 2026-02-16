@@ -244,6 +244,7 @@ export type ScheduleGame = {
   overtime?: string;
   phase?: string;
   league?: string;
+  played?: boolean;
 };
 
 export type PlayoffSeries = {
