@@ -4,7 +4,7 @@ export const FIRST_CONTINENT_TEAMS = 36;
 export const SECOND_CONTINENT_TEAMS = 40;
 export const ORIGIN_CONTINENT_LEAGUES = 3;
 export const ORIGIN_CONTINENT_TEAMS_PER_LEAGUE = 12;
-export const MINING_ISLAND_TEAMS = 20;
+export const MINING_ISLAND_TEAMS = 80;  // 20+20+20+20 (4级联赛每级20队)
 export const MINING_ISLAND_PROMOTION_RELEGATION = 3;
 
 export const TEAM_NAMES = {
@@ -57,7 +57,13 @@ export const TEAM_NAMES = {
     'Tellurium Titans', 'Antimony Avengers', 'Thallium Thunder', 'Germanium Giants',
     'Scandium Spartans', 'Vanadium Vipers', 'Chromium Chargers', 'Manganese Masters',
     'Cobalt Crushers', 'Molybdenum Monarchs', 'Ruthenium Raiders', 'Cadmium Crusaders',
-    'Hafnium Heroes', 'Tantalum Titans'
+    'Hafnium Heroes', 'Tantalum Titans',
+    // Amateur B League teams (lower quality, hobbyist names)
+    'Weekend Warriors', 'Sunday Strikers', 'Casual Crushers', 'Hobby Heroes',
+    'Amateur Athletes', 'Recreation Raiders', 'Pickup Players', 'Sandbox Spartans',
+    'Rookie Rebels', 'Novice Knights', 'Training Titans', 'Practice Pirates',
+    'Backyard Brawlers', 'Garage Giants', 'Street Smarts', 'Playground Phantoms',
+    'Community Crusaders', 'Local Legends', 'Neighborhood Ninjas', 'District Defenders'
   ]
 };
 
@@ -99,7 +105,7 @@ export const REGION_LEAGUE_STRUCTURE = {
   miningIsland: {
     type: 'pyramid',
     levels: 4,
-    teams: [20, 16, 12, 10],
+    teams: [20, 20, 20, 20],  // 4级联赛每级20队
     promotionSpots: MINING_ISLAND_PROMOTION_RELEGATION,
     relegationSpots: MINING_ISLAND_PROMOTION_RELEGATION,
     minContract: 500,

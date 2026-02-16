@@ -12,8 +12,8 @@ export type MiningLeague = typeof MINING_LEAGUES[keyof typeof MINING_LEAGUES];
 export const MINING_LEAGUE_INFO: Record<MiningLeague, { name: string; level: number; teams: number }> = {
   superLeague: { name: 'Mining Super League', level: 1, teams: 20 },
   championship: { name: 'Mining Championship', level: 2, teams: 20 },
-  aLeague: { name: 'Mining A League', level: 3, teams: 18 },
-  bLeague: { name: 'Mining B League', level: 4, teams: 0 },
+  aLeague: { name: 'Mining A League', level: 3, teams: 20 },
+  bLeague: { name: 'Mining B League', level: 4, teams: 20 },
 };
 
 export const PROMOTION_RELEGATION_SPOTS = 3;

@@ -54,7 +54,7 @@ export type PlayerRatings = {
   locked?: boolean;
 };
 
-export type Player = {
+export type Player = PlayerRatings & {
   pid: number;
   tid: number | undefined;
   name: string;
@@ -63,7 +63,6 @@ export type Player = {
   pos: Position;
   ratingsIndex: number;
   statsIndex: number;
-  ...PlayerRatings;
   contract?: Contract;
   injury?: PlayerInjury;
   watch?: number;
@@ -80,12 +79,11 @@ export type Contract = {
   noTrade: boolean;
 };
 
-export type GamePlayer = {
+export type GamePlayer = PlayerRatings & {
   pid: number;
   name: string;
   age: number;
   pos: Position;
-  ...PlayerRatings;
   stat: any;
   compositeRating: any;
   skills: string[];

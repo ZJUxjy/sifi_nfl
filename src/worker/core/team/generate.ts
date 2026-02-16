@@ -87,7 +87,7 @@ export function generateRegionTeams(
 ): { teams: Team[]; players: Player[] } {
   const teams: Team[] = [];
   const players: Player[] = [];
-  
+
   const teamConfigs = TEAM_CONFIGS[region] || [];
   const shuffledConfigs = shuffle([...teamConfigs]);
 
@@ -110,6 +110,10 @@ export function generateRegionTeams(
       did = 0;
     }
 
+    // For Mining Island, teams 61-80 are amateur (B League)
+    const isAmateur = region === 'miningIsland' && i >= 60;
+    const amateurStrength: TeamStrength = 'weak';
+
     const team = generateTeam(
       startTid + i,
       region,
@@ -118,13 +122,13 @@ export function generateRegionTeams(
       config.name,
       season,
       config.market,
-      config.strength
+      isAmateur ? amateurStrength : config.strength
     );
-    
-    const minRoster = region === 'miningIsland' ? 25 : 40;
-    const maxRoster = region === 'miningIsland' ? 40 : 55;
-    const teamPlayers = generateTeamPlayers(team, season, minRoster, maxRoster, config.strength);
-    
+
+    const minRoster = region === 'miningIsland' ? (isAmateur ? 20 : 25) : 40;
+    const maxRoster = region === 'miningIsland' ? (isAmateur ? 30 : 40) : 55;
+    const teamPlayers = generateTeamPlayers(team, season, minRoster, maxRoster, isAmateur ? amateurStrength : config.strength, isAmateur);
+
     teams.push(team);
     players.push(...teamPlayers);
   });
@@ -137,7 +141,8 @@ export function generateTeamPlayers(
   season: number,
   minRoster: number = 40,
   maxRoster: number = 55,
-  strength: TeamStrength = 'average'
+  strength: TeamStrength = 'average',
+  isAmateur: boolean = false
 ): Player[] {
   const players: Player[] = [];
   const rosterSize = Math.floor(Math.random() * (maxRoster - minRoster + 1)) + minRoster;
@@ -165,11 +170,11 @@ export function generateTeamPlayers(
       if (players.length >= rosterSize) break;
 
       const age = Math.floor(Math.random() * 15) + 21;
-      const player = generate(team.tid, age, season - (age - 21), pos as Position);
+      const player = generate(team.tid, age, season - (age - 21), pos as Position, 0, isAmateur);
       player.pid = pid++;
-      
+
       applyStrengthBonus(player, ovrBonus);
-      
+
       players.push(player);
     }
   }
@@ -178,11 +183,11 @@ export function generateTeamPlayers(
     const positions: Position[] = ['RB', 'WR', 'TE', 'DL', 'LB', 'CB', 'S'];
     const pos = sample(positions, 1)[0];
     const age = Math.floor(Math.random() * 15) + 21;
-    const player = generate(team.tid, age, season - (age - 21), pos);
+    const player = generate(team.tid, age, season - (age - 21), pos, 0, isAmateur);
     player.pid = pid++;
-    
+
     applyStrengthBonus(player, ovrBonus);
-    
+
     players.push(player);
   }
 

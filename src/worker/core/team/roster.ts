@@ -34,12 +34,12 @@ export function populateDepthChart(team: Team, players: Player[]): Record<Positi
 export function getStarters(depth: Record<Position, Player[]>): Player[] {
   const starters: Player[] = [];
 
-  starters.push(depth.QB?.[0]).filter(Boolean);
-  starters.push(depth.RB?.[0]).filter(Boolean);
+  if (depth.QB?.[0]) starters.push(depth.QB[0]);
+  if (depth.RB?.[0]) starters.push(depth.RB[0]);
   for (let i = 0; i < 3; i++) {
     if (depth.WR?.[i]) starters.push(depth.WR[i]);
   }
-  starters.push(depth.TE?.[0]).filter(Boolean);
+  if (depth.TE?.[0]) starters.push(depth.TE[0]);
   for (let i = 0; i < 5; i++) {
     if (depth.OL?.[i]) starters.push(depth.OL[i]);
   }
@@ -55,9 +55,10 @@ export function getStarters(depth: Record<Position, Player[]>): Player[] {
   for (let i = 0; i < 2; i++) {
     if (depth.S?.[i]) starters.push(depth.S[i]);
   }
-  starters.push(depth.K?.[0]).filter(Boolean);
+  if (depth.K?.[0]) starters.push(depth.K[0]);
+  if (depth.P?.[0]) starters.push(depth.P[0]);
 
-  return starters.filter(Boolean) as Player[];
+  return starters;
 }
 
 export function calculateTeamSalary(players: Player[], teamTid: number): number {

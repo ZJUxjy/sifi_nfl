@@ -1,8 +1,41 @@
-import type { Player, Position } from '../../../common/types';
+import type { Player, Position, Contract } from '../../../common/types';
 import { POSITIONS } from '../../../common/constants';
 import { truncGauss, randInt, choice, bound } from '../../../common/random';
 import { randomName } from '../../../common/names';
 import { calculateOvr, calculateAllOvrs } from './ovr';
+
+// Generate contract based on player OVR, age, and potential
+function generateContract(ovr: number, age: number, pot: number, currentSeason: number): Contract {
+  // Base salary calculation (in thousands)
+  // Higher OVR = higher salary, age affects value
+  const baseK = Math.round(
+    ovr * 15 + (pot - 50) * 2 + (30 - Math.abs(age - 27)) * 5
+  );
+  
+  // Add some randomness and ensure minimum
+  const amountK = Math.max(2, baseK + Math.round((Math.random() - 0.5) * 20));
+  const amount = amountK * 1000; // Convert to actual value
+  
+  // Contract length: younger players get longer contracts
+  let years: number;
+  if (age < 25) {
+    years = randInt(3, 5);
+  } else if (age < 30) {
+    years = randInt(2, 4);
+  } else {
+    years = randInt(1, 2);
+  }
+  
+  return {
+    amount,
+    exp: currentSeason + years,
+    years,
+    incentives: Math.round(amount * 0.1),
+    signingBonus: Math.round(amount * 0.1),
+    guaranteed: Math.round(amount * years * 0.6),
+    noTrade: ovr >= 85, // Elite players get no-trade clause
+  };
+}
 
 const POSITION_WEIGHTS: Record<Position, Record<keyof PlayerRatings, number>> = {
   QB: {
@@ -138,7 +171,11 @@ export function generateRatings(pos: Position, scoutingLevel: number = 0): Playe
   return ratings as PlayerRatings;
 }
 
-export function generatePotential(): number {
+export function generatePotential(isAmateur: boolean = false): number {
+  if (isAmateur) {
+    // Amateur players have lower potential ceiling
+    return randInt(50, 70);
+  }
   return truncGauss(50, 15, 0, 100);
 }
 
@@ -147,11 +184,12 @@ export function generate(
   age: number,
   draftYear: number,
   pos?: Position,
-  scoutingLevel: number = 0
+  scoutingLevel: number = 0,
+  isAmateur: boolean = false
 ): Player {
   const position = pos ?? choice(POSITIONS);
   const ratings = generateRatings(position, scoutingLevel);
-  const pot = generatePotential();
+  const pot = generatePotential(isAmateur);
   const ovr = calculateOvr(ratings as any, position);
 
   const player: Player = {
@@ -184,6 +222,11 @@ export function generate(
     numSons: 0,
     hallOfFame: false,
   };
+
+  // Generate contract for players assigned to a team
+  if (tid !== undefined) {
+    player.contract = generateContract(ovr, age, pot, draftYear);
+  }
 
   player.ovrs = calculateAllOvrs(player);
   for (const p of POSITIONS) {
