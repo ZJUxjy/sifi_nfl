@@ -1,0 +1,511 @@
+// Main styles
+$primary: #00d4ff;
+$secondary: #7c3aed;
+$dark: #0f172a;
+$darker: #020617;
+
+// Bootstrap overrides
+$body-bg: $darker;
+$body-color: #f8fafc;
+$link-color: $primary;
+$navbar-dark-color: rgba(255, 255, 255, 0.85);
+$navbar-dark-hover-color: $primary;
+
+@import 'bootstrap/scss/bootstrap';
+
+// Custom styles
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background: linear-gradient(135deg, $darker 0%, $dark 100%);
+  color: $body-color;
+}
+
+// Ensure all text is visible
+* {
+  color: inherit;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: #ffffff;
+}
+
+p, span, div {
+  color: #e2e8f0;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.main-content {
+  flex: 1;
+}
+
+.footer {
+  background: rgba(0, 0, 0, 0.3);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+}
+
+// Card styles
+.game-card {
+  background: rgba(15, 23, 42, 0.9);
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  border-radius: 12px;
+  backdrop-filter: blur(10px);
+  color: #e2e8f0;
+  
+  h4, h5 {
+    color: #ffffff;
+  }
+  
+  &:hover {
+    border-color: rgba(0, 212, 255, 0.5);
+    box-shadow: 0 0 20px rgba(0, 212, 255, 0.2);
+  }
+}
+
+// Team selection
+.team-card {
+  cursor: pointer;
+  transition: all 0.3s ease;
+  
+  &:hover {
+    transform: translateY(-4px);
+    border-color: $primary;
+  }
+  
+  &.selected {
+    border-color: $primary;
+    box-shadow: 0 0 20px rgba(0, 212, 255, 0.4);
+  }
+}
+
+// Stats
+.stat-value {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: $primary;
+}
+
+// Player table
+.player-table {
+  .table {
+    color: #f8fafc;
+    
+    th {
+      background: rgba(124, 58, 237, 0.4);
+      border-bottom: 2px solid $secondary;
+      color: #ffffff;
+    }
+    
+    td {
+      border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+      color: #f1f5f9;
+    }
+    
+    tbody tr:hover {
+      background: rgba(0, 212, 255, 0.15);
+      color: #ffffff;
+    }
+  }
+}
+
+// OVR colors
+.ovr-elite { color: #fbbf24; }
+.ovr-strong { color: #34d399; }
+.ovr-average { color: #60a5fa; }
+.ovr-weak { color: #f87171; }
+
+// Position badges
+.pos-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: bold;
+  
+  &.pos-offense { background: rgba(34, 197, 94, 0.3); color: #22c55e; }
+  &.pos-defense { background: rgba(239, 68, 68, 0.3); color: #ef4444; }
+  &.pos-special { background: rgba(234, 179, 8, 0.3); color: #eab308; }
+}
+
+// Loading spinner
+.loading-spinner {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 200px;
+  
+  .spinner-border {
+    width: 3rem;
+    height: 3rem;
+    border-color: $primary;
+    border-right-color: transparent;
+  }
+}
+
+// Menu buttons
+.menu-btn {
+  margin: 8px 0;
+  padding: 16px 24px;
+  font-size: 1.1rem;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  background: rgba(0, 212, 255, 0.1);
+  color: $primary;
+  transition: all 0.3s ease;
+  
+  &:hover {
+    background: rgba(0, 212, 255, 0.2);
+    border-color: $primary;
+    transform: scale(1.02);
+  }
+}
+
+// Region selector
+.region-card {
+  padding: 20px;
+  margin: 10px;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  
+  &:hover {
+    border-color: $primary;
+    background: rgba(0, 212, 255, 0.1);
+  }
+  
+  h4 {
+    color: $primary;
+    margin-bottom: 8px;
+  }
+  
+  p {
+    color: rgba(255, 255, 255, 0.7);
+    margin: 0;
+  }
+}
+
+// Nav pills (sidebar menu)
+.nav-pills {
+  .nav-link {
+    color: #94a3b8;
+    border-radius: 8px;
+    margin-bottom: 4px;
+    
+    &:hover {
+      background: rgba(0, 212, 255, 0.1);
+      color: #ffffff;
+    }
+    
+    &.active {
+      background: rgba(0, 212, 255, 0.2);
+      color: #00d4ff;
+    }
+  }
+}
+
+// Modal styles
+.modal-content {
+  background: rgba(15, 23, 42, 0.95);
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  color: #e2e8f0;
+  
+  .modal-header {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    
+    .modal-title {
+      color: #ffffff;
+    }
+    
+    .btn-close {
+      filter: invert(1);
+    }
+  }
+  
+  .modal-footer {
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  }
+}
+
+// Form controls
+.form-control, .form-select {
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  
+  &::placeholder {
+    color: #64748b;
+  }
+  
+  &:focus {
+    background: rgba(15, 23, 42, 0.9);
+    border-color: $primary;
+    color: #ffffff;
+    box-shadow: 0 0 0 0.25rem rgba(0, 212, 255, 0.25);
+  }
+}
+
+.form-select option {
+  background: #0f172a;
+  color: #ffffff;
+}
+
+// Buttons
+.btn-primary {
+  background: $primary;
+  border-color: $primary;
+  color: #0f172a;
+  
+  &:hover {
+    background: darken($primary, 10%);
+    border-color: darken($primary, 10%);
+  }
+}
+
+.btn-outline-primary {
+  color: $primary;
+  border-color: $primary;
+  
+  &:hover {
+    background: $primary;
+    color: #0f172a;
+  }
+}
+
+.btn-secondary {
+  background: #475569;
+  border-color: #475569;
+  
+  &:hover {
+    background: #64748b;
+    border-color: #64748b;
+  }
+}
+
+// Badges
+.badge {
+  font-weight: 500;
+}
+
+// Table defaults
+.table {
+  color: #e2e8f0;
+  
+  > :not(caption) > * > * {
+    color: inherit;
+  }
+}
+
+// Small text
+small, .text-muted {
+  color: #94a3b8 !important;
+}
+
+// Strong text
+strong {
+  color: #ffffff;
+}
+
+// Game Simulation Styles
+.scoreboard {
+  .scoreboard-content {
+    display: flex;
+    align-items: stretch;
+    min-height: 80px;
+  }
+
+  .team-score {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    padding: 10px;
+    min-width: 120px;
+  }
+
+  .team-name {
+    font-weight: bold;
+    font-size: 0.9rem;
+    margin-bottom: 5px;
+  }
+
+  .team-score-value {
+    font-size: 2rem;
+    font-weight: bold;
+    line-height: 1;
+  }
+
+  .scoreboard-center {
+    flex: 0 0 200px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 10px;
+  }
+
+  .quarter {
+    font-size: 0.9rem;
+    color: $primary;
+    font-weight: bold;
+    margin-bottom: 5px;
+  }
+
+  .clock {
+    font-size: 1.5rem;
+    font-weight: bold;
+    font-family: monospace;
+  }
+
+  .down-distance {
+    font-size: 0.85rem;
+    margin-top: 5px;
+    color: #94a3b8;
+  }
+
+  .field-position {
+    font-size: 0.8rem;
+    color: #64748b;
+  }
+
+  .possession-indicator {
+    position: absolute;
+    bottom: 5px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 40px;
+    height: 4px;
+    border-radius: 2px;
+    animation: pulse 1s infinite;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+// Play by Play View
+.play-by-play-view {
+  height: 400px;
+  display: flex;
+  flex-direction: column;
+
+  .pbp-events {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+    max-height: 350px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+
+    &::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 4px;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background: rgba(0, 212, 255, 0.3);
+      border-radius: 4px;
+
+      &:hover {
+        background: rgba(0, 212, 255, 0.5);
+      }
+    }
+
+    ul {
+      margin: 0;
+    }
+
+    .pbp-event {
+      padding: 6px 10px;
+      margin-bottom: 4px;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      color: #cbd5e1;
+      transition: background 0.2s;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.05);
+      }
+
+      &.td {
+        background: rgba(34, 197, 94, 0.15);
+        color: #22c55e;
+        font-weight: 500;
+      }
+
+      &.fg-good {
+        color: #34d399;
+      }
+
+      &.xp-good {
+        color: #34d399;
+      }
+
+      &.negative {
+        color: #f87171;
+      }
+
+      &.penalty {
+        color: #fbbf24;
+      }
+
+      &.quarter-break {
+        text-align: center;
+        color: $primary;
+        font-weight: bold;
+        margin: 10px 0;
+        padding: 8px;
+        background: rgba(0, 212, 255, 0.1);
+        border-radius: 4px;
+      }
+    }
+  }
+}
+
+// Game Stats View
+.game-stats-view {
+  .table {
+    th {
+      background: rgba(15, 23, 42, 0.8);
+      font-weight: 600;
+    }
+  }
+}
+
+// Game Sim View
+.game-sim-view {
+  .alert {
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(0, 212, 255, 0.2);
+    color: #e2e8f0;
+  }
+
+  .alert-info {
+    background: rgba(0, 212, 255, 0.1);
+    border-color: rgba(0, 212, 255, 0.3);
+  }
+
+  .alert-warning {
+    background: rgba(251, 191, 36, 0.1);
+    border-color: rgba(251, 191, 36, 0.3);
+    color: #fbbf24;
+  }
+}
