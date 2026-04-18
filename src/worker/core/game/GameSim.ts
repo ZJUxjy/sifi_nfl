@@ -202,7 +202,12 @@ export class GameSim {
 
   selectPlayType(): 'pass' | 'run' | 'fieldGoal' | 'punt' | 'kneel' {
     const scoreDiff = this.team[this.o].stat.pts - this.team[this.d].stat.pts;
-    const timeRemaining = this.clock + (this.numPeriods - Math.floor(this.clock / this.quarterLength) - 1) * this.quarterLength;
+    const timeRemaining = computeTimeRemaining({
+      clock: this.clock,
+      quarter: this.quarter,
+      numPeriods: this.numPeriods,
+      quarterLength: this.quarterLength,
+    });
     const fieldPosition = this.scrimmage;
     const distance = this.toGo;
     const down = this.down;
@@ -952,4 +957,27 @@ export class GameSim {
     
     return game;
   }
+}
+
+/**
+ * Total game minutes left given the current quarter and clock. Pure helper
+ * extracted from `selectPlayType` so it can be unit tested without spinning
+ * up a full GameSim.
+ *
+ * The previous in-line formula
+ *   `clock + (numPeriods - Math.floor(clock / quarterLength) - 1) * quarterLength`
+ * tried to derive elapsed quarters from the clock, which silently produced
+ * wrong values whenever `clock <= quarterLength` (always true). The correct
+ * derivation uses the explicit `quarter` field. Overtime quarters
+ * (`quarter > numPeriods`) clamp to clock-only.
+ */
+export function computeTimeRemaining(args: {
+  clock: number;
+  quarter: number;
+  numPeriods: number;
+  quarterLength: number;
+}): number {
+  const { clock, quarter, numPeriods, quarterLength } = args;
+  const fullPeriodsLeft = Math.max(0, numPeriods - quarter);
+  return clock + fullPeriodsLeft * quarterLength;
 }
