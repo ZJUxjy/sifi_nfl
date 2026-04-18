@@ -315,30 +315,24 @@ export function applyPenalty(
   const yards = penalty.info.yards;
   let newScrimmage = scrimmage;
   let newToGo = toGo;
-  let firstDown = penalty.info.automaticFirstDown;
-  
+  let firstDown = false;
+
   if (penalty.info.isOffensive) {
     newScrimmage = Math.max(1, scrimmage - yards);
-    if (yards >= toGo) {
-      newToGo = 10;
-    } else {
-      newToGo = toGo + yards;
-    }
+    // Offensive penalties never grant a first down on their own.
+    newToGo = toGo + (scrimmage - newScrimmage);
   } else {
     if (penalty.info.isSpotFoul && penalty.spotYards !== undefined) {
       newScrimmage = Math.min(99, scrimmage + penalty.spotYards);
     } else {
       newScrimmage = Math.min(99, scrimmage + yards);
     }
-    firstDown = true;
+    const yardsAdvanced = newScrimmage - scrimmage;
+    // Only an explicit automaticFirstDown flag, OR enough yards to reach
+    // the line to gain, should give the offense a fresh set of downs.
+    firstDown = penalty.info.automaticFirstDown === true || yardsAdvanced >= toGo;
+    newToGo = firstDown ? 10 : Math.max(1, toGo - yardsAdvanced);
   }
-  
-  if (penalty.info.type === 'defensivePassInterference') {
-    if (penalty.spotYards !== undefined) {
-      newScrimmage = Math.min(99, scrimmage + penalty.spotYards);
-    }
-    firstDown = true;
-  }
-  
+
   return { newScrimmage, newToGo, firstDown };
 }
