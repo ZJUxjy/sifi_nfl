@@ -33,6 +33,20 @@ export type Team = {
   strength?: TeamStrength;
   revenue?: Revenue;
   expenses?: Expenses;
+  /**
+   * Mining Island pyramid level. 1 = top division, increasing
+   * downwards. Set by generateRegionTeams; read by SeasonManager
+   * when grouping for the pyramid schedule and by the offseason
+   * promotion / relegation logic. Undefined for non-mining teams.
+   */
+  tier?: number;
+  /**
+   * Origin Continent league index (0..2 for the three parallel
+   * leagues - Metropolis / Imperial / Royal). Set by
+   * generateRegionTeams; read by SeasonManager when bucketing
+   * Phase 1 round-robin matchups. Undefined for non-origin teams.
+   */
+  leagueIndex?: number;
 };
 
 export type Revenue = {

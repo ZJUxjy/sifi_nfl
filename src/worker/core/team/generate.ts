@@ -112,6 +112,8 @@ export function generateRegionTeams(
   shuffledConfigs.forEach((config, i) => {
     let cid = 0;
     let did = 0;
+    let leagueIndex: number | undefined;
+    let tier: number | undefined;
 
     if (region === 'firstContinent') {
       cid = Math.floor(i / 12);
@@ -123,9 +125,12 @@ export function generateRegionTeams(
       const league = Math.floor(i / 12);
       cid = league;
       did = league * 3 + Math.floor((i % 12) / 4);
+      leagueIndex = league;
     } else if (region === 'miningIsland') {
       cid = 0;
       did = 0;
+      // Tier 1 = top division (teams 1-20), tier 4 = amateur (61-80).
+      tier = Math.floor(i / 20) + 1;
     }
 
     // For Mining Island, teams 61-80 are amateur (B League)
@@ -142,6 +147,13 @@ export function generateRegionTeams(
       config.market,
       isAmateur ? amateurStrength : config.strength
     );
+
+    if (tier !== undefined) {
+      team.tier = tier;
+    }
+    if (leagueIndex !== undefined) {
+      team.leagueIndex = leagueIndex;
+    }
 
     const minRoster = region === 'miningIsland' ? (isAmateur ? 20 : 25) : 40;
     const maxRoster = region === 'miningIsland' ? (isAmateur ? 30 : 40) : 55;

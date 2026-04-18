@@ -181,16 +181,21 @@ export class SeasonManager {
     const games: ScheduleGame[] = [];
     let gid = startGid;
     const teamsPerLevel = SCHEDULE_CONFIG.miningIsland.teamsPerLevel;
-    const numLevels = Math.ceil(teams.length / teamsPerLevel);
 
-    // Group teams by level
-    const levels: Team[][] = [];
-    for (let level = 0; level < numLevels; level++) {
-      const levelTeams = teams.filter((_, idx) => Math.floor(idx / teamsPerLevel) === level);
-      if (levelTeams.length > 0) {
-        levels.push(levelTeams);
-      }
+    // Group teams by their explicit `tier` field. The previous
+    // `Math.floor(idx / teamsPerLevel)` tiering depended on the input
+    // array being already sorted by level, which silently broke as
+    // soon as anything (tests, save/load, sort) reshuffled the list.
+    const tierMap = new Map<number, Team[]>();
+    for (const t of teams) {
+      const tier = t.tier ?? Math.floor((teams.indexOf(t)) / teamsPerLevel) + 1;
+      const arr = tierMap.get(tier) ?? [];
+      arr.push(t);
+      tierMap.set(tier, arr);
     }
+    const levels: Team[][] = [...tierMap.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, teamsAtTier]) => teamsAtTier);
 
     if (levels.length === 0) {
       levels.push(teams);
@@ -253,13 +258,20 @@ export class SeasonManager {
     // Initialize Origin Continent state
     const leagues: Team[][] = [[], [], []];
 
-    // Group teams by league using did (division id)
+    // Group by team.leagueIndex (Metropolis=0, Imperial=1, Royal=2).
+    // The previous `did % 3` formula was wrong: generateRegionTeams
+    // sets `did = leagueIndex * 3 + ...`, so Metropolis teams have
+    // dids {0,1,2}, Imperial teams have dids {3,4,5}, etc. - all
+    // three buckets ended up mixing teams from every league.
     for (const team of teams) {
-      const leagueIndex = team.did % 3;
-      leagues[leagueIndex].push(team);
+      const idx = team.leagueIndex ?? team.did % 3;
+      if (idx >= 0 && idx < leagues.length) {
+        leagues[idx].push(team);
+      }
     }
 
-    // Fallback if leagues are empty
+    // Fallback if leagues are empty (e.g. legacy saves with no
+    // leagueIndex on the teams) - distribute by team order.
     for (let i = 0; i < leagues.length; i++) {
       if (leagues[i].length === 0) {
         leagues[i] = teams.filter((_, idx) => idx % 3 === i);
