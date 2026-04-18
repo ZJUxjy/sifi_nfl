@@ -228,7 +228,7 @@ export type ScheduledEvent =
       phase: import('./types').Phase;
     };
 
-export type GameAttributeWithHistory<T> = NonEmptyArray<{ start: number; value: T }>;
+export type GameAttributeWithHistory<T> = import('./types').NonEmptyArray<{ start: number; value: T }>;
 
 export type InjuriesSetting = {
   name: string;
@@ -361,7 +361,12 @@ export type GameAttributesLeague = {
   intFactor: number;
   salaryPaid: number;
   cash: number;
-  budget: number;
+  // NOTE: `budget: boolean` is the league-level "is budgeting enabled" flag,
+  // declared earlier in this type. The team-season fields below (won/lost/tied/
+  // otl/playoffsRoundsWon/streak) are mistakenly part of GameAttributesLeague —
+  // they are tracked per TeamSeason, not per league. Removing them is left to
+  // a follow-up cleanup; for now we drop the duplicate `budget: number` so the
+  // type can compile.
   won: number;
   lost: number;
   tied: number;

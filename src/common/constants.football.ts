@@ -180,7 +180,9 @@ export const FATIGUE_POS = new Set(['RB', 'WR', 'TE', 'DL', 'LB', 'CB', 'S']);
 
 export const FEWER_INJURIES_POS = new Set(['QB', 'P', 'K']);
 
-const wrap = <T>(value: T): NonEmptyArray<T> => [{ start: -Infinity, value }];
+const wrap = <T>(value: T): NonEmptyArray<{ start: number; value: T }> => [
+  { start: -Infinity, value },
+];
 
 export const gameAttributesDefaults = {
   phase: 0,

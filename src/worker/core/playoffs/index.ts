@@ -502,8 +502,3 @@ export function isPlayoffComplete(bracket: PlayoffBracket | DoubleEliminationBra
 
   return false;
 }
-
-export {
-  PlayoffBracket,
-  DoubleEliminationBracket,
-};

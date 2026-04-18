@@ -1,3 +1,4 @@
+import type { JSX } from 'react';
 import { Card, Table, Badge, Row, Col, Tab, Tabs } from 'react-bootstrap';
 import type { PlayerGameSim } from '@worker/core/game/types';
 
@@ -292,7 +293,7 @@ function GameStatsView({
                       <tr key={index}>
                         <td>{item.player.name}</td>
                         <td>{item.player.pos}</td>
-                        <td>{item.player.id < 100 ? teamNames[0] : teamNames[1]}</td>
+                        <td>{item.player.pid < 100 ? teamNames[0] : teamNames[1]}</td>
                         <td>
                           <Badge bg="danger">{item.injury.type}</Badge>
                         </td>

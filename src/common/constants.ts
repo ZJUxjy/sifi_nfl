@@ -48,4 +48,6 @@ export const DEFAULT_STADIUM_CAPACITY = 60000;
 
 export const DEFAULT_POINTS_FORMULA = '';
 
-export const wrap = <T>(value: T): NonEmptyArray<T> => [{ start: -Infinity, value }];
+export const wrap = <T>(value: T): NonEmptyArray<{ start: number; value: T }> => [
+  { start: -Infinity, value },
+];
