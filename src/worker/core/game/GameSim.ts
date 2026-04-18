@@ -330,6 +330,14 @@ export class GameSim {
       
       this.down++;
       this.isClockRunning = false;
+      if (this.down > NUM_DOWNS) {
+        this.playByPlayLogger.logEvent({
+          type: 'turnoverOnDowns',
+          clock: this.clock,
+          t: this.d,
+        });
+        this.possessionChange();
+      }
       return;
     }
     
