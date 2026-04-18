@@ -370,6 +370,8 @@ export class GameSim {
       this.recordStat(this.o, qb, 'pssTD');
       this.recordStat(this.o, target, 'recTD');
       this.scoreTouchdown();
+    } else if (safety) {
+      this.scoreSafety();
     }
   }
 
@@ -419,6 +421,8 @@ export class GameSim {
     if (td) {
       this.recordStat(this.o, rb, 'rusTD');
       this.scoreTouchdown();
+    } else if (safety) {
+      this.scoreSafety();
     }
   }
 
