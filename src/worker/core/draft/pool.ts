@@ -70,14 +70,17 @@ export function calculateDraftOrder(
 }
 
 export function generateDraftPicks(
-  teams: { tid: number; region: Region }[],
+  teams: { tid: number; region: Region; won: number; lost: number }[],
   season: number,
   numRounds: number = 7
 ): DraftPick[] {
   const picks: DraftPick[] = [];
-  const order = calculateDraftOrder(teams.map(t => ({ ...t, won: 0, lost: 0 })), season);
-  
-  let dpid = 1;
+  const order = calculateDraftOrder(teams, season);
+
+  // Old code used `let dpid = 1`, which collided across seasons (every
+  // season's pick #1 had dpid 1). Namespacing by season keeps dpids
+  // globally unique up to 999 picks per season.
+  let dpid = season * 1000 + 1;
   for (let round = 1; round <= numRounds; round++) {
     for (let i = 0; i < order.length; i++) {
       picks.push({
@@ -90,7 +93,7 @@ export function generateDraftPicks(
       });
     }
   }
-  
+
   return picks;
 }
 
