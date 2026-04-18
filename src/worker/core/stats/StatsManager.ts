@@ -3,7 +3,7 @@
  * Tracks player and team statistics throughout the season
  */
 
-import type { Player, Team } from '@common/types';
+import type { Player, Team } from '@common/entities';
 import {
   type PlayerGameStats,
   type PlayerSeasonStats,
