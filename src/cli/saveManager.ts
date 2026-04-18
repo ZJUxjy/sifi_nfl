@@ -3,6 +3,18 @@ import path from 'path';
 
 const SAVES_DIR = path.join(process.cwd(), 'data', 'saves');
 
+// Save ids are produced by saveGame() as `save_${Date.now()}`, so a
+// strict `save_<digits>` whitelist exactly matches what we generate and
+// rejects anything that could escape SAVES_DIR (`..`, slashes, NUL,
+// backslashes on Windows, etc.). Validate at the public API boundary.
+const SAVE_ID_RE = /^save_\d+$/;
+
+function assertValidSaveId(id: string): void {
+  if (typeof id !== 'string' || !SAVE_ID_RE.test(id)) {
+    throw new Error(`invalid save id: ${JSON.stringify(id)}`);
+  }
+}
+
 export type SaveGame = {
   id: string;
   name: string;
@@ -73,8 +85,9 @@ export function saveGame(name: string, data: SaveData): SaveGame {
 }
 
 export function loadGame(id: string): SaveGame | null {
+  assertValidSaveId(id);
   ensureSavesDir();
-  
+
   const filePath = path.join(SAVES_DIR, `${id}.json`);
   
   if (!fs.existsSync(filePath)) {
@@ -91,8 +104,9 @@ export function loadGame(id: string): SaveGame | null {
 }
 
 export function deleteSave(id: string): boolean {
+  assertValidSaveId(id);
   ensureSavesDir();
-  
+
   const filePath = path.join(SAVES_DIR, `${id}.json`);
   
   if (fs.existsSync(filePath)) {
