@@ -67,13 +67,26 @@ function DraftRoom({ team, onDraftComplete }: DraftRoomProps) {
   const [selectedProspect, setSelectedProspect] = useState<DraftProspect | null>(null);
   const [showProspectModal, setShowProspectModal] = useState(false);
   const [showDraftModal, setShowDraftModal] = useState(false);
+  const [noDraft, setNoDraft] = useState(false);
 
-  // Calculate draft order
+  // Regions that have draft system
+  const DRAFT_REGIONS = ['firstContinent', 'secondContinent'];
+
+  // Calculate draft order (only for regions with draft)
   useEffect(() => {
     if (teams.length === 0) return;
 
+    // Check if user's region has draft
+    if (!DRAFT_REGIONS.includes(team.region)) {
+      setNoDraft(true);
+      return;
+    }
+
+    // Only include teams from the same region
+    const regionTeams = teams.filter(t => t.region === team.region);
+
     const order = calculateDraftOrder(
-      teams.map(t => ({
+      regionTeams.map(t => ({
         tid: t.tid,
         won: 0,
         lost: 0,
@@ -82,14 +95,18 @@ function DraftRoom({ team, onDraftComplete }: DraftRoomProps) {
       season
     );
     setDraftOrder(order);
-  }, [teams, season]);
+  }, [teams, season, team.region]);
 
-  // Generate draft pool
+  // Generate draft pool based on number of teams
   useEffect(() => {
-    const pool = generateDraftPool(season, 224);
+    if (noDraft || draftOrder.length === 0) return;
+
+    // Generate enough prospects: 7 rounds × teams × 1.1 (buffer)
+    const numProspects = Math.ceil(draftOrder.length * 7 * 1.1);
+    const pool = generateDraftPool(season, numProspects);
     setDraftPool(pool);
     setShowDraftModal(true);
-  }, [season]);
+  }, [season, draftOrder.length, noDraft]);
 
   // Create draft picks
   const draftPicks = useMemo(() => {
@@ -175,7 +192,6 @@ function DraftRoom({ team, onDraftComplete }: DraftRoomProps) {
         incentives: 0,
         signingBonus: prospect.contract?.signingBonus || 2500,
         guaranteed: prospect.contract?.guaranteed || 10000,
-        options: [],
         noTrade: false,
       };
     }
@@ -204,18 +220,77 @@ function DraftRoom({ team, onDraftComplete }: DraftRoomProps) {
     setDraftResults([...draftResults, { prospect: bestProspect, pick }]);
   };
 
-  // Auto-sim to user's pick
+  // Auto-sim to user's pick (batch update to avoid blocking)
   const handleSimToUser = () => {
-    while (currentPick && currentPick.teamTid !== team.tid && availableProspects.length > 0) {
-      handleSimPick();
+    if (!currentPick || currentPick.teamTid === team.tid) return;
+
+    // Find all picks until user's turn
+    const picksToSim: DraftResult[] = [];
+    const draftedPids = new Set(draftResults.map(r => r.prospect.pid));
+    const remainingProspects = draftPool.filter(p => !draftedPids.has(p.pid));
+
+    // Find upcoming picks until user's team
+    const pendingPicks = draftPicks.filter(p => !p.prospect);
+    const userPickIndex = pendingPicks.findIndex(p => p.teamTid === team.tid);
+
+    if (userPickIndex === -1) return;
+
+    // Simulate all picks before user's turn
+    for (let i = 0; i < userPickIndex && remainingProspects.length > 0; i++) {
+      const pick = pendingPicks[i];
+      const bestProspect = remainingProspects.shift();
+
+      if (bestProspect && pick) {
+        picksToSim.push({
+          prospect: bestProspect,
+          pick: {
+            round: pick.round,
+            pick: pick.pick,
+            overall: pick.overall,
+            teamTid: pick.teamTid,
+            teamName: pick.teamName,
+          },
+        });
+      }
+    }
+
+    // Batch update all results at once
+    if (picksToSim.length > 0) {
+      setDraftResults([...draftResults, ...picksToSim]);
     }
   };
 
   // Complete draft
   const handleCompleteDraft = () => {
-    // Sim remaining picks
-    while (availableProspects.length > draftResults.length) {
-      handleSimPick();
+    const picksToSim: DraftResult[] = [];
+    const draftedPids = new Set(draftResults.map(r => r.prospect.pid));
+    const remainingProspects = draftPool.filter(p => !draftedPids.has(p.pid));
+
+    // Get all remaining picks
+    const pendingPicks = draftPicks.filter(p => !p.prospect);
+
+    // Simulate all remaining picks
+    for (let i = 0; i < pendingPicks.length && remainingProspects.length > 0; i++) {
+      const pick = pendingPicks[i];
+      const bestProspect = remainingProspects.shift();
+
+      if (bestProspect && pick) {
+        picksToSim.push({
+          prospect: bestProspect,
+          pick: {
+            round: pick.round,
+            pick: pick.pick,
+            overall: pick.overall,
+            teamTid: pick.teamTid,
+            teamName: pick.teamName,
+          },
+        });
+      }
+    }
+
+    // Batch update all results at once
+    if (picksToSim.length > 0) {
+      setDraftResults([...draftResults, ...picksToSim]);
     }
 
     if (onDraftComplete) {
@@ -226,6 +301,26 @@ function DraftRoom({ team, onDraftComplete }: DraftRoomProps) {
   const formatMoney = (amount: number) => {
     return `$${(amount / 1000).toFixed(0)}K`;
   };
+
+  // No draft for this region
+  if (noDraft) {
+    return (
+      <div className="draft-room">
+        <Card className="p-4">
+          <Alert variant="warning">
+            <h5>No Draft System</h5>
+            <p className="mb-0">
+              {team.region === 'originContinent'
+                ? '起源大陆使用转会制度和"起源选秀"系统，没有常规选秀。'
+                : team.region === 'miningIsland'
+                ? '矿业岛使用转会制度和升降级系统，没有选秀。'
+                : '该地区没有选秀系统。'}
+            </p>
+          </Alert>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="draft-room">

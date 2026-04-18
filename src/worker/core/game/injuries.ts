@@ -1,6 +1,8 @@
 import type { PlayerGameSim } from './types';
 import type { PlayerInjury } from '../../../common/types';
 
+export type { PlayerInjury };
+
 export type InjuryType =
   | 'bruise'
   | 'strain'

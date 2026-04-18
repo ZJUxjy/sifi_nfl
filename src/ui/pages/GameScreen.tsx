@@ -8,14 +8,19 @@ import FinancesView from '../components/FinancesView';
 import TradeCenter from '../components/TradeCenter';
 import FreeAgencyView from '../components/FreeAgencyView';
 import DraftRoom from '../components/DraftRoom';
+import OriginDraftView from '../components/OriginDraftView';
+import PlayoffsView from '../components/PlayoffsView';
 import ImperialCupView from '../components/ImperialCupView';
+import StatsView from '../components/StatsView';
+import PromotionRelegationView from '../components/PromotionRelegationView';
+import OffseasonView from '../components/OffseasonView';
 import SaveLoadModal from '../components/SaveLoadModal';
 
 interface GameScreenProps {
   onBack: () => void;
 }
 
-type TabKey = 'roster' | 'schedule' | 'standings' | 'finances' | 'trade' | 'freeAgency' | 'draft' | 'imperialCup';
+type TabKey = 'roster' | 'schedule' | 'standings' | 'stats' | 'finances' | 'trade' | 'freeAgency' | 'draft' | 'originDraft' | 'playoffs' | 'imperialCup' | 'promoReleg' | 'offseason';
 
 function GameScreen({ onBack }: GameScreenProps) {
   const { season, week, players } = useGameStore();
@@ -80,6 +85,9 @@ function GameScreen({ onBack }: GameScreenProps) {
                 <Nav.Link eventKey="standings">🏆 Standings</Nav.Link>
               </Nav.Item>
               <Nav.Item>
+                <Nav.Link eventKey="stats">📊 Stats</Nav.Link>
+              </Nav.Item>
+              <Nav.Item>
                 <Nav.Link eventKey="finances">💰 Finances</Nav.Link>
               </Nav.Item>
               <Nav.Item>
@@ -92,7 +100,19 @@ function GameScreen({ onBack }: GameScreenProps) {
                 <Nav.Link eventKey="draft">🎯 Draft</Nav.Link>
               </Nav.Item>
               <Nav.Item>
+                <Nav.Link eventKey="originDraft">🌍 Origin Draft</Nav.Link>
+              </Nav.Item>
+              <Nav.Item>
+                <Nav.Link eventKey="playoffs">🏈 Playoffs</Nav.Link>
+              </Nav.Item>
+              <Nav.Item>
                 <Nav.Link eventKey="imperialCup">🏆 Imperial Cup</Nav.Link>
+              </Nav.Item>
+              <Nav.Item>
+                <Nav.Link eventKey="promoReleg">⬆️⬇️ Promotion</Nav.Link>
+              </Nav.Item>
+              <Nav.Item>
+                <Nav.Link eventKey="offseason">📅 Offseason</Nav.Link>
               </Nav.Item>
             </Nav>
           </Col>
@@ -107,6 +127,9 @@ function GameScreen({ onBack }: GameScreenProps) {
               <Tab.Pane eventKey="standings">
                 <StandingsView team={currentTeam} />
               </Tab.Pane>
+              <Tab.Pane eventKey="stats">
+                <StatsView />
+              </Tab.Pane>
               <Tab.Pane eventKey="finances">
                 <FinancesView team={currentTeam} players={teamPlayers} />
               </Tab.Pane>
@@ -119,8 +142,20 @@ function GameScreen({ onBack }: GameScreenProps) {
               <Tab.Pane eventKey="draft">
                 <DraftRoom team={currentTeam} />
               </Tab.Pane>
+              <Tab.Pane eventKey="originDraft">
+                <OriginDraftView team={currentTeam} />
+              </Tab.Pane>
+              <Tab.Pane eventKey="playoffs">
+                <PlayoffsView />
+              </Tab.Pane>
               <Tab.Pane eventKey="imperialCup">
                 <ImperialCupView team={currentTeam} />
+              </Tab.Pane>
+              <Tab.Pane eventKey="promoReleg">
+                <PromotionRelegationView />
+              </Tab.Pane>
+              <Tab.Pane eventKey="offseason">
+                <OffseasonView />
               </Tab.Pane>
             </Tab.Content>
           </Col>

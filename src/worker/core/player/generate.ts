@@ -1,21 +1,40 @@
-import type { Player, Position, Contract } from '../../../common/types';
+import type { Player, Position, Contract, Region } from '../../../common/types';
 import { POSITIONS } from '../../../common/constants';
 import { truncGauss, randInt, choice, bound } from '../../../common/random';
 import { randomName } from '../../../common/names';
 import { calculateOvr, calculateAllOvrs } from './ovr';
+import { REGION_LEAGUE_STRUCTURE } from '../../../common/constants.football';
 
-// Generate contract based on player OVR, age, and potential
-function generateContract(ovr: number, age: number, pot: number, currentSeason: number): Contract {
-  // Base salary calculation (in thousands)
-  // Higher OVR = higher salary, age affects value
-  const baseK = Math.round(
-    ovr * 15 + (pot - 50) * 2 + (30 - Math.abs(age - 27)) * 5
-  );
-  
-  // Add some randomness and ensure minimum
-  const amountK = Math.max(2, baseK + Math.round((Math.random() - 0.5) * 20));
-  const amount = amountK * 1000; // Convert to actual value
-  
+// Generate contract based on player OVR, age, potential, and region
+function generateContract(
+  ovr: number,
+  age: number,
+  pot: number,
+  currentSeason: number,
+  region?: Region
+): Contract {
+  // Get region-specific contract limits
+  const regionConfig = region ? REGION_LEAGUE_STRUCTURE[region as keyof typeof REGION_LEAGUE_STRUCTURE] : null;
+  const minContract = regionConfig?.minContract ?? 500000;  // Default $500K
+  const maxContract = regionConfig?.maxContract ?? 50000000; // Default $50M
+
+  // Base salary calculation
+  // Higher OVR = exponentially higher salary (star players cost much more)
+  const ovrFactor = Math.pow(ovr / 50, 2);  // Exponential scaling
+  const ageFactor = 30 - Math.abs(age - 27); // Peak at age 27
+  const potFactor = (pot - 50) * 0.1;
+
+  // Base amount in millions, then convert to actual dollars
+  const baseM = ovrFactor * 3 + ageFactor * 0.1 + potFactor * 0.2;
+  const baseAmount = baseM * 1000000; // Convert to dollars
+
+  // Add randomness (+/- 20%)
+  const randomFactor = 0.8 + Math.random() * 0.4;
+  let amount = Math.round(baseAmount * randomFactor);
+
+  // Clamp to region limits
+  amount = Math.max(minContract, Math.min(maxContract, amount));
+
   // Contract length: younger players get longer contracts
   let years: number;
   if (age < 25) {
@@ -25,14 +44,14 @@ function generateContract(ovr: number, age: number, pot: number, currentSeason: 
   } else {
     years = randInt(1, 2);
   }
-  
+
   return {
     amount,
     exp: currentSeason + years,
     years,
     incentives: Math.round(amount * 0.1),
-    signingBonus: Math.round(amount * 0.1),
-    guaranteed: Math.round(amount * years * 0.6),
+    signingBonus: Math.round(amount * 0.15),
+    guaranteed: Math.round(amount * years * 0.5),
     noTrade: ovr >= 85, // Elite players get no-trade clause
   };
 }
@@ -185,7 +204,8 @@ export function generate(
   draftYear: number,
   pos?: Position,
   scoutingLevel: number = 0,
-  isAmateur: boolean = false
+  isAmateur: boolean = false,
+  region?: Region
 ): Player {
   const position = pos ?? choice(POSITIONS);
   const ratings = generateRatings(position, scoutingLevel);
@@ -225,7 +245,7 @@ export function generate(
 
   // Generate contract for players assigned to a team
   if (tid !== undefined) {
-    player.contract = generateContract(ovr, age, pot, draftYear);
+    player.contract = generateContract(ovr, age, pot, draftYear, region);
   }
 
   player.ovrs = calculateAllOvrs(player);

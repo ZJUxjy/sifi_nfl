@@ -21,6 +21,19 @@ export interface GameState {
   games: any[];
   schedule: ScheduleGame[];
   lastGame: GameResult | null;
+  draftPicks: DraftPick[];
+  originDraftResults: OriginDraftResult[];
+  teamFinances: Map<number, TeamFinances>;
+}
+
+// === 起源选秀结果 ===
+export interface OriginDraftResult {
+  season: number;
+  playerPid: number;
+  fromTid: number;
+  toTid: number;
+  bidAmount: number;
+  compensation: number;
 }
 
 export interface NewGameOptions {

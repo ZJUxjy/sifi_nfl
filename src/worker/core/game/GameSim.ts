@@ -18,6 +18,12 @@ import {
   type GamePenalty,
 } from './penalties';
 import { generateInjury, type PlayerInjury } from './injuries';
+import type { StatsManager } from '../stats/StatsManager';
+import type { PlayerGameStats } from '@common/stats';
+import {
+  DEFAULT_PLAYER_GAME_STATS,
+  calculatePasserRating,
+} from '@common/stats';
 
 export class GameSim {
   id: number;
@@ -51,19 +57,29 @@ export class GameSim {
   penalties: GamePenalty[] = [];
   injuries: { player: PlayerGameSim; injury: PlayerInjury }[] = [];
   teamPenalties: [number, number] = [0, 0];
-  
+
+  statsManager?: StatsManager;
+  playoffs: boolean = false;
+  season: number = 2025;
+
   constructor({
     gid,
     day,
     teams,
     quarterLength = 15,
     numPeriods = 4,
+    statsManager,
+    playoffs = false,
+    season = 2025,
   }: {
     gid: number;
     day?: number;
     teams: [TeamGameSim, TeamGameSim];
     quarterLength?: number;
     numPeriods?: number;
+    statsManager?: StatsManager;
+    playoffs?: boolean;
+    season?: number;
   }) {
     this.id = gid;
     this.day = day;
@@ -72,7 +88,10 @@ export class GameSim {
     this.numPeriods = numPeriods;
     this.clock = quarterLength;
     this.playByPlayLogger = new PlayByPlayLogger(true);
-    
+    this.statsManager = statsManager;
+    this.playoffs = playoffs;
+    this.season = season;
+
     this.awaitingKickoff = Math.random() < 0.5 ? 0 : 1;
     this.d = this.awaitingKickoff;
     this.o = this.awaitingKickoff === 0 ? 1 : 0;
@@ -100,7 +119,10 @@ export class GameSim {
       clock: 0,
       final: true,
     });
-    
+
+    // Record stats to StatsManager before finalizing
+    this.recordStatsToManager();
+
     return this.finalizeGame();
   }
 
@@ -739,7 +761,7 @@ export class GameSim {
     let team0Yards = 0;
     let team1Penalties = 0;
     let team1Yards = 0;
-    
+
     for (const p of this.penalties) {
       if (p.accepted) {
         if (p.team === 0) {
@@ -751,8 +773,160 @@ export class GameSim {
         }
       }
     }
-    
+
     return { team0Penalties, team0Yards, team1Penalties, team1Yards };
+  }
+
+  /**
+   * Convert player game stats to PlayerGameStats format for StatsManager
+   */
+  convertPlayerStats(player: PlayerGameSim, tid: number): PlayerGameStats {
+    const s = player.stat;
+    const stats: PlayerGameStats = {
+      ...JSON.parse(JSON.stringify(DEFAULT_PLAYER_GAME_STATS)),
+      gp: 1,
+      gs: 1, // Assume all players who played started
+      pass: {
+        att: s.pss ?? 0,
+        cmp: s.pssCmp ?? 0,
+        inc: (s.pss ?? 0) - (s.pssCmp ?? 0),
+        yds: s.pssYds ?? 0,
+        ydsAir: 0,
+        ydsYAC: 0,
+        td: s.pssTD ?? 0,
+        int: s.pssInt ?? 0,
+        intTD: 0,
+        sacked: s.pssSk ?? 0,
+        sackedYds: s.pssSkYds ?? 0,
+        rate: 0,
+        fmb: 0,
+        fmbLost: 0,
+      },
+      rush: {
+        att: s.rus ?? 0,
+        yds: s.rusYds ?? 0,
+        td: s.rusTD ?? 0,
+        lng: s.rusLng ?? 0,
+        lngTD: false,
+        fmb: s.rusFmb ?? 0,
+        fmbLost: 0,
+        ypc: 0,
+        firstDowns: 0,
+        brokenTackles: 0,
+      },
+      recv: {
+        tgt: s.tgt ?? 0,
+        rec: s.rec ?? 0,
+        yds: s.recYds ?? 0,
+        ydsAir: 0,
+        ydsYAC: 0,
+        td: s.recTD ?? 0,
+        lng: s.recLng ?? 0,
+        lngTD: false,
+        fmb: 0,
+        fmbLost: 0,
+        drops: 0,
+        firstDowns: 0,
+        ypr: 0,
+        ctchPct: 0,
+      },
+      def: {
+        tck: s.defTck ?? 0,
+        tckSolo: s.defTckSolo ?? s.defTck ?? 0,
+        tckAst: 0,
+        tfl: 0,
+        tflYds: 0,
+        sk: s.defSk ?? 0,
+        skYds: s.defSkYds ?? 0,
+        qbHit: 0,
+        int: s.defInt ?? 0,
+        intYds: s.defIntYds ?? 0,
+        intTD: s.defIntTD ?? 0,
+        ff: s.defFf ?? 0,
+        fr: s.defFr ?? 0,
+        frYds: 0,
+        frTD: 0,
+        pd: s.defPd ?? 0,
+        blk: 0,
+        saf: 0,
+      },
+      kick: {
+        fgAtt: s.fga ?? 0,
+        fgMade: s.fg ?? 0,
+        fgLng: s.fgLng ?? 0,
+        fgBlk: 0,
+        xpAtt: s.xpa ?? 0,
+        xpMade: s.xp ?? 0,
+        ko: s.ko ?? 0,
+        koYds: s.koYds ?? 0,
+        koTB: s.koTB ?? 0,
+        koOOB: 0,
+        koOnside: 0,
+        koOnsideRec: 0,
+      },
+      punt: {
+        pnt: s.pnt ?? 0,
+        yds: s.pntYds ?? 0,
+        lng: s.pntLng ?? 0,
+        blk: 0,
+        in20: 0,
+        tb: 0,
+        fc: 0,
+        net: s.pntYds ?? 0,
+      },
+      ret: {
+        kr: s.kr ?? 0,
+        krYds: s.krYds ?? 0,
+        krLng: s.krLng ?? 0,
+        krTD: s.krTD ?? 0,
+        pr: s.pr ?? 0,
+        prYds: s.prYds ?? 0,
+        prLng: s.prLng ?? 0,
+        prTD: s.prTD ?? 0,
+        fmb: 0,
+      },
+      snp: 0,
+      pts: (s.pssTD ?? 0) * 6 + (s.rusTD ?? 0) * 6 + (s.recTD ?? 0) * 6 + (s.krTD ?? 0) * 6 + (s.prTD ?? 0) * 6 + (s.fg ?? 0) * 3 + (s.xp ?? 0),
+    };
+
+    // Calculate passer rating
+    stats.pass.rate = calculatePasserRating(stats.pass);
+
+    // Calculate yards per carry
+    stats.rush.ypc = stats.rush.att > 0 ? stats.rush.yds / stats.rush.att : 0;
+
+    // Calculate yards per reception
+    stats.recv.ypr = stats.recv.rec > 0 ? stats.recv.yds / stats.recv.rec : 0;
+
+    // Calculate catch percentage
+    stats.recv.ctchPct = stats.recv.tgt > 0 ? (stats.recv.rec / stats.recv.tgt) * 100 : 0;
+
+    return stats;
+  }
+
+  /**
+   * Record all player stats to StatsManager
+   */
+  recordStatsToManager(): void {
+    if (!this.statsManager) return;
+
+    for (let t = 0; t < 2; t++) {
+      const tid = this.team[t].id;
+      for (const player of this.team[t].player) {
+        // Check if player participated (has any stats)
+        const hasStats = Object.keys(player.stat).length > 0;
+        if (!hasStats) continue;
+
+        // Initialize and record stats
+        this.statsManager.initPlayerStats(
+          { pid: player.pid, tid } as any,
+          this.playoffs
+        );
+
+        const gameStats = this.convertPlayerStats(player, tid);
+        this.statsManager.recordPlayerGameStats(player.pid, gameStats);
+      }
+    }
   }
 
   finalizeGame(): Game {

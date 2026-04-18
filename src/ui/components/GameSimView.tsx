@@ -2,6 +2,8 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { Card, Button, ButtonGroup, Form, Alert, Spinner, Row, Col } from 'react-bootstrap';
 import { GameSim } from '@worker/core/game/GameSim';
 import { calculateCompositeRatings } from '@worker/core/player/ovr';
+import { getStatsManager } from '@worker/core/stats/StatsManager';
+import { useGameStore } from '../stores/gameStore';
 import type { TeamGameSim, PlayerGameSim, TeamNum } from '@worker/core/game/types';
 import type { PlayByPlayEvent } from '@worker/core/game/PlayByPlayLogger';
 import type { Team, Player } from '@common/entities';
@@ -84,6 +86,7 @@ function convertTeamToGameSim(team: Team, players: Player[]): TeamGameSim {
 }
 
 function GameSimView({ homeTeam, awayTeam, homePlayers, awayPlayers, onComplete, onBack }: GameSimViewProps) {
+  const { season } = useGameStore();
   const [gameState, setGameState] = useState<'pregame' | 'playing' | 'paused' | 'complete'>('pregame');
   const [speed, setSpeed] = useState<SpeedSetting>('normal');
   const [quarter, setQuarter] = useState(1);
@@ -110,12 +113,18 @@ function GameSimView({ homeTeam, awayTeam, homePlayers, awayPlayers, onComplete,
     const homeTeamSim = convertTeamToGameSim(homeTeam, homePlayers);
     const awayTeamSim = convertTeamToGameSim(awayTeam, awayPlayers);
 
+    // Get the StatsManager for tracking player statistics
+    const statsManager = getStatsManager(season);
+
     const game = new GameSim({
       gid: Date.now(),
       day: 1,
       teams: [homeTeamSim, awayTeamSim],
       quarterLength: 15,
       numPeriods: 4,
+      statsManager,
+      playoffs: false, // Regular season game
+      season,
     });
 
     setGameSim(game);

@@ -3,6 +3,7 @@ import type { MarketSize, TeamStrength } from '../../../common/entities';
 import { generate } from '../player/generate';
 import { shuffle, truncGauss, sample } from '../../../common/random';
 import { TEAM_CONFIGS } from '../../../common/teamConfig';
+import { REGION_LEAGUE_STRUCTURE } from '../../../common/constants.football';
 
 export const SCI_FI_COLORS: [string, string, string][] = [
   ['#1a237e', '#3949ab', '#5c6bc0'],
@@ -20,10 +21,10 @@ export const SCI_FI_COLORS: [string, string, string][] = [
 ];
 
 export const MARKET_CONFIG: Record<MarketSize, { budgetMult: number; cashMult: number; popLabel: string }> = {
-  huge: { budgetMult: 1.5, cashMult: 2.0, popLabel: 'Huge' },
-  large: { budgetMult: 1.2, cashMult: 1.5, popLabel: 'Large' },
+  huge: { budgetMult: 1.3, cashMult: 1.5, popLabel: 'Huge' },
+  large: { budgetMult: 1.15, cashMult: 1.25, popLabel: 'Large' },
   medium: { budgetMult: 1.0, cashMult: 1.0, popLabel: 'Medium' },
-  small: { budgetMult: 0.7, cashMult: 0.6, popLabel: 'Small' },
+  small: { budgetMult: 0.85, cashMult: 0.75, popLabel: 'Small' },
 };
 
 export const STRENGTH_CONFIG: Record<TeamStrength, { ovrBonus: number; label: string }> = {
@@ -32,6 +33,21 @@ export const STRENGTH_CONFIG: Record<TeamStrength, { ovrBonus: number; label: st
   average: { ovrBonus: 0, label: '⭐' },
   weak: { ovrBonus: -8, label: '' },
 };
+
+// Get region-specific base budget (salary cap or typical payroll)
+function getRegionBaseBudget(region: Region): number {
+  const config = REGION_LEAGUE_STRUCTURE[region as keyof typeof REGION_LEAGUE_STRUCTURE];
+  if (!config) return 100000000; // Default $100M
+
+  // For regions with salary cap, use that as base
+  if (config.salaryCap) {
+    return config.salaryCap;
+  }
+
+  // For regions without salary cap (originContinent), use a typical budget based on market
+  // This represents what a team expects to spend
+  return 150000000; // $150M typical budget for origin continent teams
+}
 
 export function generateTeam(
   tid: number,
@@ -53,8 +69,10 @@ export function generateTeam(
   const colors = shuffle([...SCI_FI_COLORS])[0];
   const marketConfig = MARKET_CONFIG[market];
 
-  const baseBudget = 200000;
-  const baseCash = 100000;
+  // Use region-specific base budget
+  const baseBudget = getRegionBaseBudget(region);
+  // Cash is a fraction of budget (working capital)
+  const baseCash = baseBudget * 0.15;
 
   return {
     tid,
@@ -170,7 +188,7 @@ export function generateTeamPlayers(
       if (players.length >= rosterSize) break;
 
       const age = Math.floor(Math.random() * 15) + 21;
-      const player = generate(team.tid, age, season - (age - 21), pos as Position, 0, isAmateur);
+      const player = generate(team.tid, age, season - (age - 21), pos as Position, 0, isAmateur, team.region);
       player.pid = pid++;
 
       applyStrengthBonus(player, ovrBonus);
@@ -183,7 +201,7 @@ export function generateTeamPlayers(
     const positions: Position[] = ['RB', 'WR', 'TE', 'DL', 'LB', 'CB', 'S'];
     const pos = sample(positions, 1)[0];
     const age = Math.floor(Math.random() * 15) + 21;
-    const player = generate(team.tid, age, season - (age - 21), pos, 0, isAmateur);
+    const player = generate(team.tid, age, season - (age - 21), pos, 0, isAmateur, team.region);
     player.pid = pid++;
 
     applyStrengthBonus(player, ovrBonus);

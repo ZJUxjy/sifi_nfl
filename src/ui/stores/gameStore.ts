@@ -84,6 +84,9 @@ export const useGameStore = create<GameStore>((set, get) => {
       games: state.games,
       schedule: state.schedule,
       lastGame: state.lastGame,
+      draftPicks: state.draftPicks,
+      originDraftResults: state.originDraftResults,
+      teamFinances: state.teamFinances,
     });
   };
 
@@ -102,6 +105,9 @@ export const useGameStore = create<GameStore>((set, get) => {
     games: [],
     schedule: [],
     lastGame: null,
+    draftPicks: [],
+    originDraftResults: [],
+    teamFinances: new Map(),
     currentPage: 'home',
 
     // Actions
