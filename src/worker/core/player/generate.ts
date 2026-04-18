@@ -1,4 +1,5 @@
-import type { Player, Position, Contract, Region } from '../../../common/types';
+import type { Position, Contract, Region } from '../../../common/types';
+import type { Player } from '../../../common/entities';
 import { POSITIONS } from '../../../common/constants';
 import { truncGauss, randInt, choice, bound } from '../../../common/random';
 import { randomName } from '../../../common/names';

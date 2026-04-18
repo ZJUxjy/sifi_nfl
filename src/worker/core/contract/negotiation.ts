@@ -1,4 +1,5 @@
-import type { Player, Team, Contract } from '../../../common/types';
+import type { Contract } from '../../../common/types';
+import type { Player, Team } from '../../../common/entities';
 import { REGION_LEAGUE_STRUCTURE } from '../../../common/constants.football';
 import { truncGauss, bound } from '../../../common/random';
 

@@ -1,11 +1,11 @@
 import type { IDBPDatabase, IDBPTransaction } from '@dumbmatter/idb';
 import type { LeagueDB } from './connectLeague';
+import type { DraftPick } from '../../common/types';
 import type {
   Player,
   Team,
   Game,
   ScheduleGame,
-  DraftPick,
   Event,
   PlayoffSeries,
   TeamSeason,
@@ -20,7 +20,7 @@ import type {
   PlayerFeat,
   SavedTradingBlock,
   ScheduledEvent,
-} from '../../common/types';
+} from '../../common/entities';
 
 export type Store =
   | 'players'

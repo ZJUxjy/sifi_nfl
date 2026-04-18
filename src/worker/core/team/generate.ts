@@ -1,5 +1,5 @@
-import type { Team, Player, Position, Region } from '../../../common/types';
-import type { MarketSize, TeamStrength } from '../../../common/entities';
+import type { Position, Region } from '../../../common/types';
+import type { Team, Player, MarketSize, TeamStrength } from '../../../common/entities';
 import { generate } from '../player/generate';
 import { shuffle, truncGauss, sample } from '../../../common/random';
 import { TEAM_CONFIGS } from '../../../common/teamConfig';

@@ -1,4 +1,5 @@
-import type { Team, Player, Position } from '../../../common/types';
+import type { Position } from '../../../common/types';
+import type { Team, Player } from '../../../common/entities';
 import { POSITIONS } from '../../../common/constants';
 
 export function populateDepthChart(team: Team, players: Player[]): Record<Position, Player[]> {

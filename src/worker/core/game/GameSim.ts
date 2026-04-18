@@ -1,4 +1,4 @@
-import type { Game, Team, Player } from '../../../common/types';
+import type { Game, Team, Player } from '../../../common/entities';
 import type { TeamNum, PlayerGameSim, TeamGameSim, PlayEvent } from './types';
 import { calculateCompositeRatings } from '../player/ovr';
 import { choice, randInt, truncGauss, bound } from '../../../common/random';

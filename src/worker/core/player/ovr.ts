@@ -1,4 +1,5 @@
-import type { Player, Position, PlayerRatings } from '../../../common/types';
+import type { Position } from '../../../common/types';
+import type { Player, PlayerRatings } from '../../../common/entities';
 import { POSITIONS } from '../../../common/constants';
 
 export function calculateOvr(ratings: PlayerRatings, pos: Position): number {

@@ -1,4 +1,5 @@
-import type { Player, Team, Position, GamePlayer } from '../../../common/types';
+import type { Position } from '../../../common/types';
+import type { Player, Team, GamePlayer } from '../../../common/entities';
 
 export type TeamNum = 0 | 1;
 

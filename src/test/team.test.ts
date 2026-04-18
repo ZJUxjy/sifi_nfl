@@ -11,7 +11,8 @@ import {
   calculateTeamSalary,
   isRosterFull 
 } from '../worker/core/team/roster';
-import type { Region, Player } from '../common/types';
+import type { Region } from '../common/types';
+import type { Player } from '../common/entities';
 
 describe('Team Generation', () => {
   describe('generateTeam', () => {
