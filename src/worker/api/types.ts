@@ -4,7 +4,7 @@
  */
 
 import type { Team, Player } from '@common/entities';
-import type { Region, Phase, Position } from '@common/types';
+import type { Region, Phase, Position, DraftPick } from '@common/types';
 
 // === 核心状态 ===
 export interface GameState {
@@ -165,14 +165,11 @@ export interface ContractOffer {
 }
 
 // === 选秀 ===
-export interface DraftPick {
-  dpid: number;
-  tid: number;
-  originalTid: number;
-  round: number;
-  pick: number;
-  season: number;
-}
+// DraftPick is defined in @common/types as the single source of truth
+// (its `season` field also accepts the special string 'originDraft').
+// The API layer just re-exports it so consumers can keep importing from
+// @worker/api/types without coupling to the common module.
+export type { DraftPick };
 
 export interface CombineResults {
   fortyTime: number;
