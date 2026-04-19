@@ -135,6 +135,19 @@ describe('Roster Management', () => {
         expect(s.ovr).toBeLessThanOrEqual(100);
       });
     });
+
+    // Regression guard: rosterSize is randomized, and previously a small rosterSize
+    // (40-42) left CB/S/K/P depth empty so getStarters returned 18-19 ~17% of runs.
+    it('should always return >=20 starters across many randomized generations', () => {
+      for (let run = 0; run < 30; run++) {
+        const { teams, players } = generateRegionTeams('firstContinent', 0, 2025);
+        for (const team of teams) {
+          const depth = populateDepthChart(team, players);
+          const starters = getStarters(depth);
+          expect(starters.length, `run ${run} tid ${team.tid}`).toBeGreaterThanOrEqual(20);
+        }
+      }
+    });
   });
 
   describe('calculateTeamSalary', () => {

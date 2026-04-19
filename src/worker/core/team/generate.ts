@@ -178,7 +178,8 @@ export function generateTeamPlayers(
   const rosterSize = Math.floor(Math.random() * (maxRoster - minRoster + 1)) + minRoster;
   const ovrBonus = STRENGTH_CONFIG[strength].ovrBonus;
 
-  const positionCounts: Record<Position, number> = {
+  // Caps per position for the full ideal roster (sum=58 > maxRoster, so some are truncated).
+  const positionCaps: Record<Position, number> = {
     QB: 3,
     RB: 4,
     WR: 6,
@@ -194,31 +195,60 @@ export function generateTeamPlayers(
     PR: 2,
   };
 
+  // Phase 1 must guarantee one player per starter slot in roster.getStarters,
+  // otherwise small rosterSize values silently leave CB/S/K/P empty and the
+  // depth chart returns < 20 starters (was an intermittent test failure).
+  const starterCounts: Record<Position, number> = {
+    QB: 1,
+    RB: 1,
+    WR: 3,
+    TE: 1,
+    OL: 5,
+    DL: 4,
+    LB: 3,
+    CB: 2,
+    S: 2,
+    K: 1,
+    P: 1,
+    KR: 0,
+    PR: 0,
+  };
+
+  const positionTotals: Record<Position, number> = {
+    QB: 0, RB: 0, WR: 0, TE: 0, OL: 0, DL: 0, LB: 0,
+    CB: 0, S: 0, K: 0, P: 0, KR: 0, PR: 0,
+  };
+
   let pid = 0;
-  for (const [pos, count] of Object.entries(positionCounts)) {
-    for (let i = 0; i < count; i++) {
-      if (players.length >= rosterSize) break;
-
-      const age = Math.floor(Math.random() * 15) + 21;
-      const player = generate(team.tid, age, season - (age - 21), pos as Position, 0, isAmateur, team.region);
-      player.pid = pid++;
-
-      applyStrengthBonus(player, ovrBonus);
-
-      players.push(player);
-    }
-  }
-
-  while (players.length < rosterSize) {
-    const positions: Position[] = ['RB', 'WR', 'TE', 'DL', 'LB', 'CB', 'S'];
-    const pos = sample(positions, 1)[0];
+  const addPlayer = (pos: Position) => {
     const age = Math.floor(Math.random() * 15) + 21;
     const player = generate(team.tid, age, season - (age - 21), pos, 0, isAmateur, team.region);
     player.pid = pid++;
-
     applyStrengthBonus(player, ovrBonus);
-
     players.push(player);
+    positionTotals[pos]++;
+  };
+
+  // Phase 1: starter slots first so getStarters() always has someone at every position.
+  for (const [pos, count] of Object.entries(starterCounts) as [Position, number][]) {
+    for (let i = 0; i < count; i++) {
+      if (players.length >= rosterSize) break;
+      addPlayer(pos);
+    }
+  }
+
+  // Phase 2: backups up to per-position cap, in original priority order, until rosterSize is reached.
+  for (const [pos, cap] of Object.entries(positionCaps) as [Position, number][]) {
+    while (positionTotals[pos] < cap && players.length < rosterSize) {
+      addPlayer(pos);
+    }
+  }
+
+  // Phase 3: fallback fill for very large minRoster values (defensive; sum of caps is 58).
+  while (players.length < rosterSize) {
+    const positions: Position[] = ['RB', 'WR', 'TE', 'DL', 'LB', 'CB', 'S'];
+    const pos = sample(positions, 1)[0];
+    addPlayer(pos);
   }
 
   return players;
