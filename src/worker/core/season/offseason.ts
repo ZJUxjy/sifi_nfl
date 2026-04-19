@@ -268,18 +268,35 @@ export class OffseasonManager {
   }
 
   /**
-   * Process contract expirations
+   * Process contract expirations.
+   *
+   * Canonical rule: every signing site (signFreeAgent, generateContract,
+   * draft pool, negotiation.finalizeContract, createContract here) sets
+   * `exp = signingSeason + years`, i.e. `exp` is the first season the
+   * contract is *not* valid and `years remaining at season S = exp - S`.
+   *
+   * Previously this method checked `years <= 0` *before* decrementing
+   * `years`, so a freshly-signed 1-year contract (years=1) survived the
+   * offseason that should have ended it -- every contract effectively
+   * got a free extra year, and `getPendingFreeAgents()` (which reads
+   * `years <= 1`) reported the wrong cohort.
+   *
+   * We now use `exp <= newSeason` (where `newSeason = this.season + 1`)
+   * as the single source of truth and re-derive `years` from `exp` for
+   * non-expired contracts so the two fields can no longer drift apart.
    */
   private processContractExpirations(): Player[] {
     console.log('Processing contract expirations...');
 
     const newFreeAgents: Player[] = [];
+    const newSeason = this.season + 1;
 
     for (const player of this.players) {
       if (!player.contract) continue;
 
-      // Check if contract expired
-      if (player.contract.years <= 0) {
+      const expired = player.contract.exp <= newSeason;
+
+      if (expired) {
         const team = this.teams.find(t => t.tid === player.tid);
 
         // High-value players may re-sign
@@ -287,11 +304,12 @@ export class OffseasonManager {
         const shouldResign = ovr >= 75 && Math.random() < 0.6;
 
         if (shouldResign && team) {
-          // Re-sign with team
-          const oldAmount = player.contract?.amount || 1000000;
+          // Re-sign with team. The new contract is signed *for*
+          // newSeason (the upcoming season), so anchor exp there.
+          const oldAmount = player.contract.amount || 1000000;
           const newYears = Math.min(4, Math.max(1, 3 - Math.floor((player.age - 28) / 3)));
           const newAmount = Math.round(oldAmount * (0.9 + Math.random() * 0.3));
-          player.contract = createContract(newAmount, newYears, this.season);
+          player.contract = createContract(newAmount, newYears, newSeason);
           this.events.push({
             type: 'signed',
             playerPid: player.pid,
@@ -317,8 +335,11 @@ export class OffseasonManager {
           });
         }
       } else {
-        // Reduce contract years
-        player.contract.years -= 1;
+        // Keep `years` in lockstep with `exp` (`exp` is the canonical
+        // anchor; `years` is a derived view used by UI / pending-FA
+        // hints). This prevents the two fields from silently drifting
+        // if any future code path mutates one without the other.
+        player.contract.years = player.contract.exp - newSeason;
       }
     }
 
@@ -402,6 +423,7 @@ export class OffseasonManager {
   private aiSignFreeAgents(team: Team, positionCounts: Record<string, number>): void {
     const freeAgents = this.players.filter(p => p.tid === undefined || p.tid < 0);
     const teamPlayers = this.players.filter(p => p.tid === team.tid);
+    const newSeason = this.season + 1;
 
     // Minimum requirements by position
     const minRequirements: Record<string, number> = {
@@ -426,7 +448,7 @@ export class OffseasonManager {
             // Sign the player
             player.tid = team.tid;
             const contractAmount = Math.round(500000 + (player.ovr || 50) * 10000);
-            player.contract = createContract(contractAmount, 1, this.season);
+            player.contract = createContract(contractAmount, 1, newSeason);
 
             positionCounts[pos] = (positionCounts[pos] || 0) + 1;
             teamPlayers.push(player);
@@ -484,7 +506,8 @@ export class OffseasonManager {
         if (bestAvailable) {
           bestAvailable.tid = team.tid;
           const contractAmount = Math.round(800000 + (8 - round) * 100000);
-          bestAvailable.contract = createContract(contractAmount, 4, this.season);
+          // Drafted rookies start playing in newSeason; anchor exp there.
+          bestAvailable.contract = createContract(contractAmount, 4, this.season + 1);
           bestAvailable.draft = {
             ...bestAvailable.draft,
             tid: team.tid,
@@ -619,7 +642,7 @@ export class OffseasonManager {
         if (best) {
           best.tid = team.tid;
           const contractAmount = Math.round(500000 + (best.ovr || 50) * 10000);
-          best.contract = createContract(contractAmount, 1, this.season);
+          best.contract = createContract(contractAmount, 1, this.season + 1);
 
           this.events.push({
             type: 'signed',
