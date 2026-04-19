@@ -97,6 +97,14 @@ export const REGION_LEAGUE_STRUCTURE = {
     type: 'pyramid',
     leagues: ORIGIN_CONTINENT_LEAGUES,
     teamsPerLeague: ORIGIN_CONTINENT_TEAMS_PER_LEAGUE,
+    // The 3 leagues are tiered (Metropolis=0 top, Imperial=1 middle,
+    // Royal=2 bottom). After every season the worst {promotionSpots}
+    // teams of league N swap with the best {promotionSpots} of league
+    // N+1. Mirrors REGION_LEAGUE_STRUCTURE.miningIsland; consumed by
+    // OffseasonManager.applyPromotionRelegation.
+    levels: ORIGIN_CONTINENT_LEAGUES,
+    promotionSpots: 1,
+    relegationSpots: 1,
     salaryCap: null,             // No salary cap - teams manage own finances
     minPayroll: null,
     luxuryPayroll: null,

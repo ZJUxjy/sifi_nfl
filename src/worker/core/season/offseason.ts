@@ -14,6 +14,7 @@
 import type { Player } from '@common/entities';
 import type { Team } from '@common/entities';
 import type { Region, Contract, DraftPick } from '@common/types';
+import { REGION_LEAGUE_STRUCTURE } from '@common/constants.football';
 import { develop } from '../player/generate';
 import {
   processRetirements,
@@ -75,6 +76,76 @@ export type PromotionRelegationResult = {
 };
 
 /**
+ * Generic pyramid promotion / relegation. For every adjacent pair of
+ * populated levels (where "adjacent" means N and N+1 with no gap), the
+ * bottom `swapCount` teams of the upper level (sorted by `won`
+ * ascending) trade levels with the top `swapCount` teams of the lower
+ * level (sorted by `won` descending). Non-contiguous level numbers
+ * are NOT bridged; teams stay where they are.
+ *
+ * Both Mining Island (`team.tier`, 1=top) and Origin Continent
+ * (`team.leagueIndex`, 0=top) flow through here so the swap rules
+ * can never drift apart.
+ */
+function promoteRelegatePyramidByLevel(
+  teams: Team[],
+  getLevel: (t: Team) => number | undefined,
+  setLevel: (t: Team, level: number) => void,
+  swapCount: number
+): PromotionRelegationResult {
+  const promoted: TierMove[] = [];
+  const relegated: TierMove[] = [];
+
+  if (swapCount <= 0) {
+    return { promoted, relegated };
+  }
+
+  const populated = [
+    ...new Set(
+      teams.map(getLevel).filter((x): x is number => typeof x === 'number')
+    ),
+  ].sort((a, b) => a - b);
+
+  // Snapshot the level assignments first so a team that is just
+  // promoted out of, say, level 2 isn't immediately re-considered as
+  // a "level 2 team" when we process the 2<->3 boundary.
+  const originalLevel = new Map<number, number>();
+  for (const t of teams) {
+    const lvl = getLevel(t);
+    if (typeof lvl === 'number') {
+      originalLevel.set(t.tid, lvl);
+    }
+  }
+
+  for (let i = 0; i < populated.length - 1; i++) {
+    const upper = populated[i];
+    const lower = populated[i + 1];
+    if (lower !== upper + 1) {
+      continue;
+    }
+
+    const upperTeams = teams
+      .filter(t => originalLevel.get(t.tid) === upper)
+      .sort((a, b) => a.won - b.won);
+    const lowerTeams = teams
+      .filter(t => originalLevel.get(t.tid) === lower)
+      .sort((a, b) => b.won - a.won);
+    const swaps = Math.min(swapCount, upperTeams.length, lowerTeams.length);
+
+    for (let k = 0; k < swaps; k++) {
+      const demoted = upperTeams[k];
+      const elevated = lowerTeams[k];
+      setLevel(demoted, lower);
+      setLevel(elevated, upper);
+      relegated.push({ tid: demoted.tid, fromTier: upper, toTier: lower });
+      promoted.push({ tid: elevated.tid, fromTier: lower, toTier: upper });
+    }
+  }
+
+  return { promoted, relegated };
+}
+
+/**
  * Apply Mining Island promotion / relegation in place.
  *
  * For every adjacent pair of populated tiers (1<->2, 2<->3, ...), the
@@ -87,48 +158,48 @@ export type PromotionRelegationResult = {
  * Mutates `teams` and returns lists describing every swap.
  */
 export function promoteRelegateMiningIsland(teams: Team[]): PromotionRelegationResult {
-  const promoted: TierMove[] = [];
-  const relegated: TierMove[] = [];
+  return promoteRelegatePyramidByLevel(
+    teams,
+    t => t.tier,
+    (t, level) => {
+      t.tier = level;
+    },
+    PROMOTION_COUNT
+  );
+}
 
-  const populatedTiers = [...new Set(teams.map(t => t.tier).filter((x): x is number => typeof x === 'number'))]
-    .sort((a, b) => a - b);
-
-  // Snapshot the tier assignments first so that a team that is just
-  // promoted out of, say, tier 2 isn't immediately re-considered as
-  // a "tier 2 team" when we process the 2<->3 boundary.
-  const originalTier = new Map<number, number>();
-  for (const t of teams) {
-    if (typeof t.tier === 'number') {
-      originalTier.set(t.tid, t.tier);
-    }
+/**
+ * Apply Origin Continent promotion / relegation in place.
+ *
+ * Origin uses `leagueIndex` (0=top Metropolis ... 2=bottom Royal)
+ * instead of `tier`, but the rules mirror Mining Island: swap the
+ * worst K of league N with the best K of league N+1, where K is
+ * sourced from `REGION_LEAGUE_STRUCTURE.originContinent.promotionSpots`
+ * so the design knob can never drift between config and runtime.
+ *
+ * If the configured `levels < 2` (single-league origin) the function
+ * is a guaranteed no-op: it returns empty move lists and never throws.
+ */
+export function promoteRelegateOriginContinent(
+  teams: Team[]
+): PromotionRelegationResult {
+  const cfg = REGION_LEAGUE_STRUCTURE.originContinent as unknown as {
+    levels?: number;
+    promotionSpots?: number;
+  };
+  const swapCount = cfg.promotionSpots ?? 0;
+  const levels = cfg.levels ?? 0;
+  if (levels < 2 || swapCount <= 0) {
+    return { promoted: [], relegated: [] };
   }
-
-  for (let i = 0; i < populatedTiers.length - 1; i++) {
-    const upperTier = populatedTiers[i];
-    const lowerTier = populatedTiers[i + 1];
-    if (lowerTier !== upperTier + 1) {
-      continue;
-    }
-
-    const upper = teams
-      .filter(t => originalTier.get(t.tid) === upperTier)
-      .sort((a, b) => a.won - b.won);
-    const lower = teams
-      .filter(t => originalTier.get(t.tid) === lowerTier)
-      .sort((a, b) => b.won - a.won);
-    const swaps = Math.min(PROMOTION_COUNT, upper.length, lower.length);
-
-    for (let k = 0; k < swaps; k++) {
-      const demoted = upper[k];
-      const elevated = lower[k];
-      demoted.tier = lowerTier;
-      elevated.tier = upperTier;
-      relegated.push({ tid: demoted.tid, fromTier: upperTier, toTier: lowerTier });
-      promoted.push({ tid: elevated.tid, fromTier: lowerTier, toTier: upperTier });
-    }
-  }
-
-  return { promoted, relegated };
+  return promoteRelegatePyramidByLevel(
+    teams,
+    t => t.leagueIndex,
+    (t, level) => {
+      t.leagueIndex = level;
+    },
+    swapCount
+  );
 }
 
 export type OffseasonEvent = {
@@ -668,6 +739,48 @@ export class OffseasonManager {
           teamTid: move.tid,
           teamName: team.name,
           details: `Relegated from tier ${move.fromTier} to tier ${move.toTier}`,
+          season: this.season,
+        });
+      }
+    }
+
+    // Origin Continent promotion/relegation - mirrors mining island
+    // but on team.leagueIndex (0=top Metropolis, 2=bottom Royal).
+    // Without this branch the standings on origin had zero effect on
+    // next year's schedule, even though seasonManagerV2 buckets Phase 1
+    // matchups strictly by leagueIndex.
+    const originTeams = this.teams.filter(t => t.region === 'originContinent');
+    if (originTeams.length > 0) {
+      const { promoted, relegated } = promoteRelegateOriginContinent(originTeams);
+
+      for (const move of promoted) {
+        const team = originTeams.find(t => t.tid === move.tid)!;
+        promotedTeams.push({
+          tid: move.tid,
+          from: `league ${move.fromTier}`,
+          to: `league ${move.toTier}`,
+        });
+        this.events.push({
+          type: 'promoted',
+          teamTid: move.tid,
+          teamName: team.name,
+          details: `Promoted from league ${move.fromTier} to league ${move.toTier}`,
+          season: this.season,
+        });
+      }
+
+      for (const move of relegated) {
+        const team = originTeams.find(t => t.tid === move.tid)!;
+        relegatedTeams.push({
+          tid: move.tid,
+          from: `league ${move.fromTier}`,
+          to: `league ${move.toTier}`,
+        });
+        this.events.push({
+          type: 'relegated',
+          teamTid: move.tid,
+          teamName: team.name,
+          details: `Relegated from league ${move.fromTier} to league ${move.toTier}`,
           season: this.season,
         });
       }
