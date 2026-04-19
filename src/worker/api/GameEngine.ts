@@ -20,19 +20,44 @@ import {
   evaluateTrade as evalTrade,
   createTradeAsset,
   shouldAcceptTrade,
-  executeTrade as doExecuteTrade,
+  isPlayerTradable as doIsPlayerTradable,
 } from '../core/trade';
+import type { TradeAsset, TradeProposal as InternalTradeProposal } from '../core/trade/evaluate';
 import {
   generateContractDemand,
   evaluateOffer,
   signFreeAgent as doSignFreeAgent,
   releasePlayer as doReleasePlayer,
+  type FreeAgentDemand,
 } from '../core/freeAgent';
 import {
-  generateDraftPool,
+  generateDraftPool as doGenerateDraftPool,
   calculateDraftOrder,
+  generateDraftPicks,
   selectPlayer as doSelectPlayer,
+  getEligiblePlayersForOriginDraft,
 } from '../core/draft';
+import type { DraftProspect as InternalDraftProspect } from '../core/draft';
+import {
+  isImperialCupYear as doIsImperialCupYear,
+  getNextImperialCupYear as doGetNextImperialCupYear,
+  qualifyForImperialCup as doQualifyForImperialCup,
+  generateImperialCupBracket as doGenerateImperialCupBracket,
+  advanceRound as doAdvanceImperialCupRound,
+  type ImperialCupMatch,
+} from '../core/imperialCup';
+import {
+  generateSingleEliminationBracket as doGenerateSingleEliminationBracket,
+  advanceSingleEliminationRoundWithGameSim as doAdvanceSingleEliminationRound,
+  isPlayoffComplete as doIsPlayoffComplete,
+  type PlayoffBracket,
+  type DoubleEliminationBracket,
+} from '../core/playoffs';
+import { StatsManager } from '../core/stats/StatsManager';
+import { GameSim as GameSimImpl } from '../core/game/GameSim';
+import { calculateCompositeRatings } from '../core/player/ovr';
+import type { PlayerSeasonStats } from '@common/stats';
+import type { TeamGameSim, PlayerGameSim } from '../core/game/types';
 import type {
   GameState,
   NewGameOptions,
@@ -46,15 +71,34 @@ import type {
   ContractOffer,
   DraftProspect,
   ContractDemand,
+  DraftPick,
+  TeamFinances,
+  OriginDraftResult,
 } from './types';
 import type { Team, Player } from '@common/entities';
 import type { Region } from '@common/types';
+import { REGION_LEAGUE_STRUCTURE } from '@common/constants.football';
+import {
+  serializeSave,
+  validateSave,
+  CURRENT_SAVE_SCHEMA_VERSION,
+} from '@common/saveSchema';
 
-const GAME_VERSION = '0.2.0';
+// Re-export so consumers can read the version without grabbing the
+// shared module directly. Also documents that GameEngine and
+// cli/saveManager pin the same on-disk / on-IDB version.
+export { CURRENT_SAVE_SCHEMA_VERSION };
 
 export class GameEngine {
   private state: GameState;
   private seasonManager: SeasonManager | null = null;
+  /**
+   * Per-engine stats accumulator. Lazily constructed on first access so
+   * fresh engines (tests, multiple parallel games on the server, etc.)
+   * never share state through a module-level singleton — that was the
+   * source of the cross-game `pssYds` doubling bug fixed in P2/D1.
+   */
+  private statsManager: StatsManager | null = null;
 
   constructor() {
     this.state = this.getInitialState();
@@ -75,6 +119,9 @@ export class GameEngine {
       games: [],
       schedule: [],
       lastGame: null,
+      draftPicks: [],
+      originDraftResults: [],
+      teamFinances: new Map(),
     };
   }
 
@@ -87,6 +134,11 @@ export class GameEngine {
   async newGame(options: NewGameOptions): Promise<void> {
     console.log('GameEngine.newGame called with options:', options);
     this.state.loading = true;
+
+    // Resolve the target season up-front so every storage / generator call
+    // below uses a single consistent value instead of falling back to a
+    // hardcoded literal at the call site (P2 D2).
+    const targetSeason = options.season || this.state.season;
 
     // Initialize IndexedDB
     if (typeof window !== 'undefined') {
@@ -101,7 +153,7 @@ export class GameEngine {
     // Check for cached data in IndexedDB
     if (typeof window !== 'undefined') {
       try {
-        const cachedData = await loadWorldData();
+        const cachedData = await loadWorldData(targetSeason);
         console.log('Cached data loaded:', cachedData ? `${cachedData.teams?.length} teams, ${cachedData.players?.length} players` : 'null');
 
         if (cachedData && cachedData.teams && cachedData.teams.length > 0 && cachedData.players && cachedData.players.length > 0) {
@@ -127,6 +179,10 @@ export class GameEngine {
             games: [],
             lastGame: null,
           };
+
+          // Initialize draft picks for First/Second Continent teams
+          this.initializeDraftPicks();
+
           console.log('GameEngine state initialized from cache:', {
             teams: this.state.teams.length,
             players: this.state.players.length,
@@ -148,7 +204,7 @@ export class GameEngine {
       const { generateAllTeams } = await import('../core/team/index');
       const { generateFreeAgentPool } = await import('../core/freeAgent/market');
 
-      const season = options.season || 2025;
+      const season = targetSeason;
       console.log('Generating teams for season', season);
       const { teams, players } = generateAllTeams(season);
       console.log('Generated teams:', teams.length, 'players:', players.length);
@@ -177,6 +233,10 @@ export class GameEngine {
         games: [],
         lastGame: null,
       };
+
+      // Initialize draft picks for First/Second Continent teams
+      this.initializeDraftPicks();
+
       console.log('GameEngine state initialized from generation');
 
       // Cache to IndexedDB
@@ -202,14 +262,22 @@ export class GameEngine {
   }
 
   // === Save/Load ===
+  // Both saveGame and loadGame route through `@common/saveSchema` so
+  // the UI (IDB) path and the CLI (`cli/saveManager`) path share a
+  // single zod-validated envelope. See FL7 in
+  // `docs/plans/2026-04-19-review-fixlist.md`.
   async saveGame(name?: string): Promise<string> {
     const saveName = name || `Save_${this.state.season}_Week${this.state.week}`;
-    const saveData = {
-      version: GAME_VERSION,
-      timestamp: Date.now(),
-      name: saveName,
+    // FL5: persist the per-engine StatsManager (otherwise season
+    // pass/rush/recv totals silently reset to zero on reload).
+    // FL7: serializeSave validates BEFORE we hand the blob to the
+    // storage layer so the engine never writes a save that it
+    // wouldn't itself accept on reload.
+    const saveData = serializeSave({
       state: this.state,
-    };
+      stats: this.statsManager ? this.statsManager.export() : null,
+      name: saveName,
+    });
 
     if (typeof window !== 'undefined') {
       await idbSaveGame(saveName, saveData);
@@ -221,25 +289,46 @@ export class GameEngine {
   }
 
   async loadGame(saveIdOrData: string): Promise<void> {
-    let saveData: any;
+    let raw: unknown;
 
     if (typeof window !== 'undefined') {
-      saveData = await idbLoadGame(saveIdOrData);
-      if (!saveData) {
+      raw = await idbLoadGame(saveIdOrData);
+      if (!raw) {
         throw new Error(`Save not found: ${saveIdOrData}`);
       }
     } else {
-      saveData = JSON.parse(saveIdOrData);
+      raw = JSON.parse(saveIdOrData);
     }
 
-    // Restore state
-    this.state = saveData.state;
+    // FL7: always run validateSave so a bad / partial / future-version
+    // / hand-edited save can never replace the in-memory engine state.
+    // migrateSave() upgrades pre-FL7 saves (no schemaVersion / no
+    // savedAt / no stats) so legacy IDB content still loads.
+    const saveData = validateSave(raw);
+
+    // Restore state. The cast is safe because saveSchema enforces the
+    // GameState field set above; the inner array element types are
+    // intentionally left loose at the schema level.
+    this.state = saveData.state as unknown as GameState;
 
     // Rebuild season manager
     if (this.state.teams.length > 0) {
       this.seasonManager = new SeasonManager(this.state.season, this.state.teams);
       this.seasonManager.currentWeek = this.state.week;
       this.seasonManager.schedule = this.state.schedule;
+    }
+
+    // FL5: always install a *fresh* StatsManager. Reusing the existing
+    // instance (even via `.import()` alone) would let the prior in-memory
+    // accumulator survive when the same engine reloads a different save
+    // for the same season — that's the cross-save leak the brief calls
+    // out, orthogonal to the P2/D1 instance-isolation fix. Construct
+    // first, then optionally hydrate from the snapshot if present.
+    // Old saves with no `stats` field have it normalised to `null` by
+    // migrateSave() and fall through to an empty manager.
+    this.statsManager = new StatsManager(this.state.season);
+    if (saveData.stats) {
+      this.statsManager.import(saveData.stats as Parameters<StatsManager['import']>[0]);
     }
   }
 
@@ -319,6 +408,24 @@ export class GameEngine {
   }
 
   getFreeAgents(): Player[] {
+    // FL3: contract-level guarantee — at any read time the exposed FA
+    // pool must match `state.players.filter(tid undefined/<0)`. Loud
+    // dev-mode warning if the two ever diverge again so future regressions
+    // are caught at the boundary rather than via UI staleness reports.
+    if (
+      typeof process !== 'undefined' &&
+      process.env &&
+      process.env.NODE_ENV === 'development'
+    ) {
+      const derived = this.state.players.filter(
+        p => p.tid === undefined || p.tid < 0
+      );
+      if (derived.length !== this.state.freeAgents.length) {
+        console.warn(
+          `[GameEngine] state.freeAgents drifted from players: ${this.state.freeAgents.length} vs ${derived.length}`
+        );
+      }
+    }
     return this.state.freeAgents;
   }
 
@@ -405,27 +512,28 @@ export class GameEngine {
 
   // === Trade Methods ===
   evaluateTrade(proposal: TradeProposal): TradeEvaluation {
+    const season = this.state.season;
     const fromAssets = [
       ...proposal.fromPlayerIds.map(pid => {
         const player = this.getPlayer(pid);
-        return player ? createTradeAsset('player', player) : null;
+        return player ? createTradeAsset('player', player, season) : null;
       }).filter(Boolean),
-      ...(proposal.fromDraftPicks || []).map(() => createTradeAsset('pick', { dpid: 0, tid: proposal.toTeam, originalTid: proposal.fromTeam, round: 1, pick: 1, season: this.state.season })),
+      ...(proposal.fromDraftPicks || []).map(() => createTradeAsset('pick', { dpid: 0, tid: proposal.toTeam, originalTid: proposal.fromTeam, round: 1, pick: 1, season }, season)),
     ].filter(Boolean) as any[];
 
     const toAssets = [
       ...proposal.toPlayerIds.map(pid => {
         const player = this.getPlayer(pid);
-        return player ? createTradeAsset('player', player) : null;
+        return player ? createTradeAsset('player', player, season) : null;
       }).filter(Boolean),
-      ...(proposal.toDraftPicks || []).map(() => createTradeAsset('pick', { dpid: 0, tid: proposal.fromTeam, originalTid: proposal.toTeam, round: 1, pick: 1, season: this.state.season })),
+      ...(proposal.toDraftPicks || []).map(() => createTradeAsset('pick', { dpid: 0, tid: proposal.fromTeam, originalTid: proposal.toTeam, round: 1, pick: 1, season }, season)),
     ].filter(Boolean) as any[];
 
     if (proposal.fromCash) {
-      fromAssets.push(createTradeAsset('cash', proposal.fromCash));
+      fromAssets.push(createTradeAsset('cash', proposal.fromCash, season));
     }
     if (proposal.toCash) {
-      toAssets.push(createTradeAsset('cash', proposal.toCash));
+      toAssets.push(createTradeAsset('cash', proposal.toCash, season));
     }
 
     const internalProposal = {
@@ -545,7 +653,7 @@ export class GameEngine {
   // === Draft Methods ===
   getDraftProspects(): DraftProspect[] {
     // Generate draft pool if not already generated for this season
-    return generateDraftPool(this.state.season, 224);
+    return doGenerateDraftPool(this.state.season, 224) as unknown as DraftProspect[];
   }
 
   draftPlayer(prospectId: number): { success: boolean; reason?: string } {
@@ -588,6 +696,735 @@ export class GameEngine {
     // For now, use simple simulation
     // TODO: Integrate with GameSim for full play-by-play
     return this.simulateGame(game);
+  }
+
+  // === Draft Picks Methods ===
+  getDraftPicks(tid?: number): DraftPick[] {
+    if (tid !== undefined) {
+      return this.state.draftPicks.filter(p => p.tid === tid);
+    }
+    return this.state.draftPicks;
+  }
+
+  initializeDraftPicks(): void {
+    const teams = this.state.teams.filter(t =>
+      t.region === 'firstContinent' || t.region === 'secondContinent'
+    );
+    this.state.draftPicks = generateDraftPicks(teams, this.state.season, 7);
+  }
+
+  tradeDraftPick(dpid: number, fromTid: number, toTid: number): boolean {
+    const pick = this.state.draftPicks.find(p => p.dpid === dpid);
+    if (!pick || pick.tid !== fromTid) return false;
+    pick.tid = toTid;
+    return true;
+  }
+
+  // === Origin Draft Methods ===
+  getOriginDraftEligiblePlayers(): Player[] {
+    return getEligiblePlayersForOriginDraft(this.state.players, this.state.teams, this.state.season);
+  }
+
+  executeOriginDraftPick(
+    playerPid: number,
+    toTid: number,
+    bidAmount: number
+  ): { success: boolean; reason?: string } {
+    const player = this.state.players.find(p => p.pid === playerPid);
+    if (!player) {
+      return { success: false, reason: 'Player not found' };
+    }
+
+    const fromTid = player.tid;
+    if (fromTid === undefined || fromTid < 0) {
+      return { success: false, reason: 'Player is not on a team' };
+    }
+
+    const toTeam = this.state.teams.find(t => t.tid === toTid);
+    if (!toTeam) {
+      return { success: false, reason: 'Target team not found' };
+    }
+
+    // Check if team can afford the bid
+    if (toTeam.budget < bidAmount) {
+      return { success: false, reason: 'Insufficient budget for bid' };
+    }
+
+    // Calculate compensation (10% of salary + bid amount)
+    const salary = player.contract?.amount || 0;
+    const compensation = Math.round(salary * 0.1 + bidAmount);
+
+    // Transfer player
+    const fromTeam = this.state.teams.find(t => t.tid === fromTid);
+    player.tid = toTid;
+
+    // Update contracts - new contract at 2x rookie salary
+    const newSalary = Math.round(bidAmount * 2);
+    player.contract = {
+      amount: newSalary,
+      exp: this.state.season + 3,
+      years: 3,
+      incentives: 0,
+      signingBonus: Math.round(bidAmount * 0.3),
+      guaranteed: Math.round(newSalary * 2),
+      noTrade: false,
+    };
+
+    // Update budgets
+    if (fromTeam) {
+      fromTeam.budget += compensation;
+    }
+    toTeam.budget -= bidAmount;
+
+    // Record the result
+    this.state.originDraftResults.push({
+      season: this.state.season,
+      playerPid,
+      fromTid,
+      toTid,
+      bidAmount,
+      compensation,
+    });
+
+    return { success: true };
+  }
+
+  getOriginDraftResults(): typeof this.state.originDraftResults {
+    return this.state.originDraftResults;
+  }
+
+  // === Financial Tracking Methods ===
+  getTeamFinances(tid: number): TeamFinances {
+    const cached = this.state.teamFinances.get(tid);
+    if (cached) return cached;
+
+    const team = this.state.teams.find(t => t.tid === tid);
+    if (!team) {
+      return this.getEmptyFinances();
+    }
+
+    const finances = this.calculateTeamFinances(team);
+    this.state.teamFinances.set(tid, finances);
+    return finances;
+  }
+
+  private calculateTeamFinances(team: Team): TeamFinances {
+    const teamPlayers = this.state.players.filter(p => p.tid === team.tid);
+    const payroll = teamPlayers.reduce((sum, p) => sum + (p.contract?.amount || 0), 0);
+
+    // Calculate revenue based on team market and performance
+    const marketMultiplier = team.market === 'huge' ? 1.5 : team.market === 'large' ? 1.2 : team.market === 'medium' ? 1.0 : 0.8;
+    const baseRevenue = 50000000 * marketMultiplier; // $50M base
+
+    const revenue = {
+      ticketSales: Math.round(baseRevenue * 0.4),
+      merchandise: Math.round(baseRevenue * 0.15),
+      tvRights: Math.round(baseRevenue * 0.25),
+      sponsorships: Math.round(baseRevenue * 0.15),
+      prizeMoney: Math.round(baseRevenue * 0.05),
+      total: 0,
+    };
+    revenue.total = revenue.ticketSales + revenue.merchandise + revenue.tvRights + revenue.sponsorships + revenue.prizeMoney;
+
+    const expenses = {
+      salary: payroll,
+      signingBonuses: teamPlayers.reduce((sum, p) => sum + (p.contract?.signingBonus || 0) / (p.contract?.years || 1), 0),
+      coaching: Math.round(5000000 * marketMultiplier),
+      facilities: Math.round(3000000 * marketMultiplier),
+      travel: 2000000,
+      total: 0,
+    };
+    expenses.total = expenses.salary + expenses.signingBonuses + expenses.coaching + expenses.facilities + expenses.travel;
+
+    const profit = revenue.total - expenses.total;
+
+    const cap = REGION_LEAGUE_STRUCTURE[team.region]?.salaryCap ?? 180_000_000;
+
+    return {
+      budget: team.budget,
+      cash: team.budget,
+      payroll,
+      capSpace: Math.max(0, cap - payroll),
+      revenue,
+      expenses,
+      profit,
+    };
+  }
+
+  private getEmptyFinances(): TeamFinances {
+    return {
+      budget: 0,
+      cash: 0,
+      payroll: 0,
+      capSpace: 0,
+      revenue: { ticketSales: 0, merchandise: 0, tvRights: 0, sponsorships: 0, prizeMoney: 0, total: 0 },
+      expenses: { salary: 0, signingBonuses: 0, coaching: 0, facilities: 0, travel: 0, total: 0 },
+      profit: 0,
+    };
+  }
+
+  updateTeamFinances(tid: number, gameRevenue: number = 0): void {
+    const team = this.state.teams.find(t => t.tid === tid);
+    if (!team) return;
+
+    const finances = this.calculateTeamFinances(team);
+    if (gameRevenue > 0) {
+      finances.revenue.ticketSales += gameRevenue;
+      finances.revenue.total += gameRevenue;
+      finances.profit += gameRevenue;
+    }
+
+    this.state.teamFinances.set(tid, finances);
+    team.budget = finances.cash + finances.profit;
+  }
+
+  // === Promotion/Relegation Methods ===
+  getMiningIslandStandings(): Map<string, StandingEntry[]> {
+    const miningTeams = this.state.teams.filter(t => t.region === 'miningIsland');
+    const standingsMap = new Map<string, StandingEntry[]>();
+
+    // Group teams by league (based on a league property or simple distribution)
+    // For now, we'll use standings to determine leagues
+    const allStandings = this.getStandings().filter(s => s.region === 'miningIsland');
+
+    // Divide into 4 tiers of roughly 14-15 teams each
+    const sortedStandings = [...allStandings].sort((a, b) => b.winPct - a.winPct);
+    const tier1 = sortedStandings.slice(0, 15);
+    const tier2 = sortedStandings.slice(15, 30);
+    const tier3 = sortedStandings.slice(30, 45);
+    const tier4 = sortedStandings.slice(45);
+
+    standingsMap.set('superLeague', tier1);
+    standingsMap.set('championship', tier2);
+    standingsMap.set('aLeague', tier3);
+    standingsMap.set('bLeague', tier4);
+
+    return standingsMap;
+  }
+
+  getPromotionRelegationZones(region: Region): {
+    promotionZone: number[];
+    relegationZone: number[];
+    playoffZone?: number[];
+  } | null {
+    if (region === 'miningIsland') {
+      const standings = this.getStandings()
+        .filter(s => s.region === 'miningIsland')
+        .sort((a, b) => b.winPct - a.winPct);
+
+      // Top 3 from each tier promoted, bottom 3 relegated
+      // For simplicity, we show the overall top/bottom zones
+      const promotionZone = standings.slice(0, 3).map(s => s.tid);
+      const relegationZone = standings.slice(-3).map(s => s.tid);
+
+      return { promotionZone, relegationZone };
+    }
+
+    if (region === 'originContinent') {
+      const standings = this.getStandings()
+        .filter(s => s.region === 'originContinent')
+        .sort((a, b) => b.winPct - a.winPct);
+
+      // Bottom team from each league directly relegated
+      // Second-to-bottom goes to playoff
+      const relegationZone = standings.slice(-3).map(s => s.tid);
+      const playoffZone = standings.slice(-6, -3).map(s => s.tid);
+
+      return { promotionZone: [], relegationZone, playoffZone };
+    }
+
+    return null;
+  }
+
+  calculateSeasonEndPromotionRelegation(): {
+    miningIsland: {
+      promoted: { tid: number; fromLeague: string; toLeague: string }[];
+      relegated: { tid: number; fromLeague: string; toLeague: string }[];
+    };
+    originContinent: {
+      relegated: { tid: number; league: string }[];
+      playoffCandidates: { tid: number; league: string }[];
+    };
+  } {
+    const result = {
+      miningIsland: {
+        promoted: [] as { tid: number; fromLeague: string; toLeague: string }[],
+        relegated: [] as { tid: number; fromLeague: string; toLeague: string }[],
+      },
+      originContinent: {
+        relegated: [] as { tid: number; league: string }[],
+        playoffCandidates: [] as { tid: number; league: string }[],
+      },
+    };
+
+    // Mining Island promotion/relegation
+    const miningStandings = this.getMiningIslandStandings();
+    const leagueOrder = ['bLeague', 'aLeague', 'championship', 'superLeague'];
+
+    for (let i = 0; i < leagueOrder.length - 1; i++) {
+      const currentLeague = leagueOrder[i];
+      const nextLeague = leagueOrder[i + 1];
+
+      const currentStandings = miningStandings.get(currentLeague) || [];
+      const nextStandings = miningStandings.get(nextLeague) || [];
+
+      // Top 3 from current league promoted
+      const promoted = currentStandings.slice(0, 3);
+      for (const standing of promoted) {
+        result.miningIsland.promoted.push({
+          tid: standing.tid,
+          fromLeague: currentLeague,
+          toLeague: nextLeague,
+        });
+      }
+
+      // Bottom 3 from next league relegated
+      const relegated = nextStandings.slice(-3);
+      for (const standing of relegated) {
+        result.miningIsland.relegated.push({
+          tid: standing.tid,
+          fromLeague: nextLeague,
+          toLeague: currentLeague,
+        });
+      }
+    }
+
+    // Origin Continent relegation (simplified)
+    const originStandings = this.getStandings()
+      .filter(s => s.region === 'originContinent')
+      .sort((a, b) => b.winPct - a.winPct);
+
+    // Bottom 3 directly relegated (one from each league)
+    const relegated = originStandings.slice(-3);
+    for (const standing of relegated) {
+      const team = this.state.teams.find(t => t.tid === standing.tid);
+      result.originContinent.relegated.push({
+        tid: standing.tid,
+        league: team?.cid?.toString() || 'unknown',
+      });
+    }
+
+    // Next 3 are playoff candidates
+    const playoffCandidates = originStandings.slice(-6, -3);
+    for (const standing of playoffCandidates) {
+      const team = this.state.teams.find(t => t.tid === standing.tid);
+      result.originContinent.playoffCandidates.push({
+        tid: standing.tid,
+        league: team?.cid?.toString() || 'unknown',
+      });
+    }
+
+    return result;
+  }
+
+  // === Season Transition Methods ===
+  /**
+   * Advance to next season
+   * Processes all offseason events including:
+   * - Player aging and development
+   * - Player retirements
+   * - Contract expirations
+   * - Free agency
+   * - Draft
+   * - Promotion/relegation
+   */
+  async advanceSeason(): Promise<{
+    success: boolean;
+    result?: import('../core/season/offseason').OffseasonResult;
+    error?: string;
+  }> {
+    try {
+      const { OffseasonManager } = await import('../core/season/offseason');
+
+      // FL3: state.freeAgents is seeded by generateFreeAgentPool at
+      // newGame() time as a *separate* list from state.players (which
+      // generateAllTeams populates with rostered players only). The
+      // offseason pipeline only knows about state.players, so any FA
+      // sitting in state.freeAgents but not in state.players would
+      // silently fall off the canonical roster. Merge by pid before
+      // running the offseason so contract / re-sign / fill-roster
+      // logic sees the full pool.
+      const knownPids = new Set(this.state.players.map(p => p.pid));
+      for (const fa of this.state.freeAgents) {
+        if (!knownPids.has(fa.pid)) {
+          this.state.players.push(fa);
+        }
+      }
+
+      // FL8: pass the canonical draftPicks ledger through. runDraft()
+      // consumes it (sorted by round + pick) and credits each pick to
+      // its current holder (`pick.tid`, post-trade) instead of running
+      // a record-sorted round-robin that silently undid every traded
+      // pick the moment the offseason fired.
+      const offseasonManager = new OffseasonManager(
+        this.state.players,
+        this.state.teams,
+        this.state.season,
+        this.state.draftPicks
+      );
+
+      const result = offseasonManager.runOffseason();
+
+      // Update state with new season data
+      this.state.players = offseasonManager.getPlayers();
+      this.state.teams = offseasonManager.getTeams();
+      // Pull the (now annotated: played=true / playerPid=…) pick
+      // ledger back so anyone reading state.draftPicks afterwards sees
+      // the consumed picks until initializeDraftPicks() rolls a fresh
+      // set for the new season below.
+      this.state.draftPicks = offseasonManager.getDraftPicks();
+      this.state.season = result.newSeason;
+      this.state.week = 1;
+      this.state.phase = 2; // Regular season
+
+      // FL3: rebuild state.freeAgents from the canonical players list
+      // so getFreeAgents() and `players.filter(tid undefined/<0)` always
+      // agree (FreeAgencyView reads getFreeAgents() and would otherwise
+      // render last season's stale pool indefinitely).
+      this.state.freeAgents = this.state.players.filter(
+        p => p.tid === undefined || p.tid < 0
+      );
+
+      // Reinitialize draft picks for new season
+      this.initializeDraftPicks();
+
+      // Reset season manager for new season
+      if (this.seasonManager) {
+        this.seasonManager = new SeasonManager(this.state.season, this.state.teams);
+        this.seasonManager.startRegularSeason();
+        this.state.schedule = this.seasonManager.schedule;
+      }
+
+      // Clear last game
+      this.state.lastGame = null;
+      this.state.games = [];
+
+      console.log(`Advanced to season ${this.state.season}`);
+      console.log(`Offseason events: ${result.events.length}`);
+      console.log(`Retired: ${result.retiredPlayers.length}`);
+      console.log(`Hall of Fame: ${result.hallOfFameInductees.length}`);
+
+      return { success: true, result };
+    } catch (error) {
+      console.error('Failed to advance season:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  /**
+   * Get pending free agents (contracts expiring this season)
+   */
+  getPendingFreeAgents(): Player[] {
+    return this.state.players.filter(p => {
+      if (!p.contract || p.tid === undefined || p.tid < 0) return false;
+      return p.contract.years <= 1;
+    });
+  }
+
+  /**
+   * Get retired players from last offseason
+   */
+  getRetiredPlayers(season?: number): Player[] {
+    return this.state.players.filter(p => {
+      if (!p.retiredYear) return false;
+      if (season) return p.retiredYear === season;
+      return true;
+    });
+  }
+
+  /**
+   * Get Hall of Fame players
+   */
+  getHallOfFamePlayers(): Player[] {
+    return this.state.players.filter(p => p.hallOfFame === true);
+  }
+
+  /**
+   * Check if season is complete (all games played)
+   */
+  isSeasonComplete(): boolean {
+    const totalWeeks = 17; // Regular season weeks
+    return this.state.week > totalWeeks || this.state.phase >= 4;
+  }
+
+  // === Public wrappers (Task 22): UI/CLI must reach worker/core ===
+  // === through these methods instead of importing internals.    ===
+
+  // -- Trade --
+  getPlayerTradeValue(player: Player): number {
+    return calculatePlayerValue(player, this.state.season);
+  }
+
+  getPickTradeValue(pick: DraftPick): number {
+    return calculatePickValue(pick);
+  }
+
+  isPlayerTradable(player: Player): boolean {
+    return doIsPlayerTradable(player);
+  }
+
+  buildTradeAsset(
+    type: 'player' | 'pick' | 'cash',
+    data: Player | DraftPick | number
+  ): TradeAsset {
+    return createTradeAsset(type, data, this.state.season);
+  }
+
+  /**
+   * Evaluate a trade composed from raw assets (built via buildTradeAsset).
+   * Used by the trade-center UI which manipulates assets directly.
+   */
+  evaluateAssetTrade(proposal: InternalTradeProposal): {
+    fair: boolean;
+    fromValue: number;
+    toValue: number;
+  } {
+    return evalTrade(proposal);
+  }
+
+  aiAcceptsTrade(proposal: InternalTradeProposal): boolean {
+    return shouldAcceptTrade(proposal, true);
+  }
+
+  /**
+   * Move a player from one team to another (raw transfer used by the
+   * trade-center execute flow).
+   */
+  transferPlayer(pid: number, toTid: number): boolean {
+    const player = this.getPlayer(pid);
+    if (!player) return false;
+    player.tid = toTid;
+    return true;
+  }
+
+  // -- Draft --
+  generateDraftPool(numProspects: number): InternalDraftProspect[] {
+    return doGenerateDraftPool(this.state.season, numProspects);
+  }
+
+  /**
+   * Compute the draft order for a region using current state's
+   * win/loss records (Task 10 fix already applied internally).
+   */
+  getRegionalDraftOrder(region: Region): number[] {
+    const regionTeams = this.state.teams
+      .filter(t => t.region === region)
+      .map(t => ({ tid: t.tid, won: t.won, lost: t.lost, region: t.region }));
+    return calculateDraftOrder(regionTeams, this.state.season);
+  }
+
+  selectDraftedPlayer(
+    teamTid: number,
+    prospect: InternalDraftProspect,
+    pick: { round: number; pick: number; teamTid: number; teamName: string }
+  ): Player {
+    const dpick: DraftPick = {
+      dpid: Date.now(),
+      tid: teamTid,
+      originalTid: teamTid,
+      round: pick.round,
+      pick: pick.pick,
+      season: this.state.season,
+    };
+    return doSelectPlayer(teamTid, prospect, dpick, this.state.season);
+  }
+
+  // -- Free Agency --
+  getFreeAgentDemand(player: Player): FreeAgentDemand {
+    return generateContractDemand(player);
+  }
+
+  evaluateFreeAgentOffer(
+    player: Player,
+    demand: FreeAgentDemand,
+    offer: { salary: number; years: number; team: Team }
+  ): { accepted: boolean; reason: string } {
+    return evaluateOffer(player, demand, offer);
+  }
+
+  /**
+   * Direct contract sign that mirrors the worker/core signFreeAgent
+   * helper (used by the FA UI which has already validated the offer).
+   * The high-level `signFreeAgent` method above also runs the AI
+   * evaluation; this one is a raw transfer.
+   */
+  commitFreeAgentSigning(
+    player: Player,
+    team: Team,
+    salary: number,
+    years: number
+  ): void {
+    doSignFreeAgent(player, team, salary, years, this.state.season);
+    this.state.freeAgents = this.state.freeAgents.filter(p => p.pid !== player.pid);
+    if (!this.state.players.find(p => p.pid === player.pid)) {
+      this.state.players.push(player);
+    }
+  }
+
+  releaseFreeAgent(player: Player): void {
+    doReleasePlayer(player);
+  }
+
+  // -- Imperial Cup --
+  isImperialCupYear(season: number = this.state.season): boolean {
+    return doIsImperialCupYear(season);
+  }
+
+  getNextImperialCupYear(season: number = this.state.season): number {
+    return doGetNextImperialCupYear(season);
+  }
+
+  qualifyForImperialCup(): number[] {
+    return doQualifyForImperialCup(this.state.teams, this.getStandings());
+  }
+
+  generateImperialCupBracket(qualifiedTeams: number[]): ImperialCupMatch[] {
+    return doGenerateImperialCupBracket(qualifiedTeams);
+  }
+
+  advanceImperialCupRound(matches: ImperialCupMatch[]): ImperialCupMatch[] | null {
+    return doAdvanceImperialCupRound(matches);
+  }
+
+  // -- Playoffs --
+  generateSingleEliminationBracket(teams: Team[], region: Region): PlayoffBracket {
+    return doGenerateSingleEliminationBracket(teams, region, this.state.season);
+  }
+
+  advanceSingleEliminationRound(bracket: PlayoffBracket): void {
+    doAdvanceSingleEliminationRound(
+      bracket,
+      this.state.players,
+      this.state.season,
+      this.getStatsManager(),
+    );
+  }
+
+  isPlayoffComplete(bracket: PlayoffBracket | DoubleEliminationBracket): boolean {
+    return doIsPlayoffComplete(bracket);
+  }
+
+  // -- Stats --
+  /**
+   * Engine-owned StatsManager. The optional `season` argument lets callers
+   * request a manager for a different year (e.g. historical lookup). When
+   * the requested season differs from the cached one, the existing
+   * instance is reset rather than replaced — this preserves any external
+   * references that callers may already hold.
+   */
+  getStatsManager(season: number = this.state.season): StatsManager {
+    if (!this.statsManager) {
+      this.statsManager = new StatsManager(season);
+    } else if (season !== undefined && this.statsManager['season'] !== season) {
+      this.statsManager.resetForSeason(season);
+    }
+    return this.statsManager;
+  }
+
+  /**
+   * League-wide player stats for the requested season + bucket. Defaults
+   * to the regular-season bucket so legacy callers (e.g. the leaderboard
+   * view) keep their pre-FL6 behaviour without having to be touched.
+   * Pass `playoffs = true` for the postseason bucket.
+   */
+  getAllPlayerStats(
+    season: number = this.state.season,
+    playoffs: boolean = false,
+  ): PlayerSeasonStats[] {
+    return this.getStatsManager(season).getAllPlayerStats(playoffs);
+  }
+
+  // -- Game simulation factory (Task 22 wrapper; Task 23 will move it ---
+  // to a Web Worker, but the public surface stays the same).            ---
+  convertPlayerToGameSim(player: Player): PlayerGameSim {
+    const compositeRating = calculateCompositeRatings(player);
+    return {
+      pid: player.pid,
+      name: player.name,
+      pos: player.pos,
+      hgt: player.hgt,
+      stre: player.stre,
+      spd: player.spd,
+      endu: player.endu,
+      thv: player.thv,
+      thp: player.thp,
+      tha: player.tha,
+      bsc: player.bsc,
+      elu: player.elu,
+      rtr: player.rtr,
+      hnd: player.hnd,
+      rbk: player.rbk,
+      pbk: player.pbk,
+      pcv: player.pcv,
+      tck: player.tck,
+      prs: player.prs,
+      rns: player.rns,
+      kpw: player.kpw,
+      kac: player.kac,
+      ppw: player.ppw,
+      pac: player.pac,
+      fuzz: player.fuzz,
+      ovr: player.ovr,
+      pot: player.pot,
+      stat: {},
+      compositeRating: compositeRating as any,
+      energy: 100,
+      ptModifier: 1,
+      injury: player.injury,
+    };
+  }
+
+  convertTeamToGameSim(team: Team, players: Player[]): TeamGameSim {
+    const gameSimPlayers = players.map(p => this.convertPlayerToGameSim(p));
+    const positions = ['QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'CB', 'S', 'K', 'P', 'KR', 'PR'];
+    const depth: Record<string, PlayerGameSim[]> = {};
+    for (const pos of positions) {
+      depth[pos] = gameSimPlayers
+        .filter(p => p.pos === pos)
+        .sort((a, b) => b.ovr - a.ovr);
+    }
+    return {
+      id: team.tid,
+      stat: { pts: 0 },
+      player: gameSimPlayers,
+      compositeRating: {},
+      depth,
+    };
+  }
+
+  /**
+   * Construct an interactive GameSim instance configured with the
+   * current season's StatsManager. Returned object is the actual
+   * GameSim and exposes simPlay / clock / quarter / team for the UI
+   * loop. Callers should treat it as opaque and prefer engine APIs
+   * for anything they can.
+   */
+  createGameSim(opts: {
+    homeTeam: Team;
+    awayTeam: Team;
+    homePlayers: Player[];
+    awayPlayers: Player[];
+    quarterLength?: number;
+    numPeriods?: number;
+    playoffs?: boolean;
+    gid?: number;
+    day?: number;
+  }): GameSimImpl {
+    const homeSim = this.convertTeamToGameSim(opts.homeTeam, opts.homePlayers);
+    const awaySim = this.convertTeamToGameSim(opts.awayTeam, opts.awayPlayers);
+    return new GameSimImpl({
+      gid: opts.gid ?? Date.now(),
+      day: opts.day ?? 1,
+      teams: [homeSim, awaySim],
+      quarterLength: opts.quarterLength ?? 15,
+      numPeriods: opts.numPeriods ?? 4,
+      statsManager: this.getStatsManager(),
+      playoffs: opts.playoffs ?? false,
+      season: this.state.season,
+    });
   }
 }
 

@@ -11,7 +11,8 @@ import {
   calculateTeamSalary,
   isRosterFull 
 } from '../worker/core/team/roster';
-import type { Region, Player } from '../common/types';
+import type { Region } from '../common/types';
+import type { Player } from '../common/entities';
 
 describe('Team Generation', () => {
   describe('generateTeam', () => {
@@ -25,8 +26,8 @@ describe('Team Generation', () => {
       expect(team.colors).toHaveLength(3);
       expect(SCI_FI_COLORS).toContainEqual(team.colors);
       expect(team.pop).toMatch(/Small|Medium|Large|Huge/);
-      expect(team.budget).toBe(200000);
-      expect(team.cash).toBe(100000);
+      expect(team.budget).toBeGreaterThanOrEqual(50_000_000);
+      expect(team.cash).toBeGreaterThanOrEqual(1_000_000);
     });
 
     it('should generate unique abbreviations', () => {
@@ -133,6 +134,19 @@ describe('Roster Management', () => {
         expect(s.ovr).toBeGreaterThanOrEqual(0);
         expect(s.ovr).toBeLessThanOrEqual(100);
       });
+    });
+
+    // Regression guard: rosterSize is randomized, and previously a small rosterSize
+    // (40-42) left CB/S/K/P depth empty so getStarters returned 18-19 ~17% of runs.
+    it('should always return >=20 starters across many randomized generations', () => {
+      for (let run = 0; run < 30; run++) {
+        const { teams, players } = generateRegionTeams('firstContinent', 0, 2025);
+        for (const team of teams) {
+          const depth = populateDepthChart(team, players);
+          const starters = getStarters(depth);
+          expect(starters.length, `run ${run} tid ${team.tid}`).toBeGreaterThanOrEqual(20);
+        }
+      }
     });
   });
 

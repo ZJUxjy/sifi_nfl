@@ -42,6 +42,10 @@ export type ScoringEventInput =
       names: string[];
       t: TeamNum;
       yds: number;
+      // Optional: a block aborts the kick before make/miss is decided,
+      // so blocked attempts always log `made: false, blocked: true`.
+      // Older consumers that just check `made` keep working unchanged.
+      blocked?: boolean;
     }
   | {
       type: 'extraPoint';
@@ -49,6 +53,18 @@ export type ScoringEventInput =
       made: boolean;
       names: string[];
       t: TeamNum;
+    }
+  | {
+      type: 'twoPointConversion';
+      clock: number;
+      names: string[];
+      t: TeamNum;
+      success: boolean;
+      // The play type used for the attempt — kept on the event so the
+      // play-by-play UI can render "QB pass" vs "RB rush" without
+      // having to infer it from the player position. A successful
+      // attempt is worth 2 points; a failure is worth 0 (no kick).
+      playType: 'pass' | 'run';
     }
   | {
       type: 'sack';
@@ -72,6 +88,49 @@ export type ScoringEventInput =
       names: string[];
       t: TeamNum;
       td: boolean;
+      yds: number;
+    }
+  // Dedicated celebration events for defensive return touchdowns. We
+  // emit these IN ADDITION to the underlying interception/fumble event
+  // (which carries td=true) so consumers that care specifically about
+  // pick-six / fumble-six (e.g. season-leader boards) don't have to
+  // pattern-match on `type === 'interception' && td`.
+  | {
+      type: 'pickSix';
+      clock: number;
+      names: string[];
+      pid: number;
+      t: TeamNum;
+      yds: number;
+    }
+  | {
+      type: 'fumbleSix';
+      clock: number;
+      names: string[];
+      pid: number;
+      t: TeamNum;
+      yds: number;
+    }
+  // Blocked-kick return touchdowns. Symmetric with pickSix / fumbleSix:
+  // the kicking-team event (`fieldGoal` or `punt`) carries `blocked: true`
+  // so consumers that don't care about the return can short-circuit on
+  // the kick event alone, while these dedicated events let leader boards
+  // and play-by-play UIs surface the score-changing return without
+  // pattern-matching on the kick event.
+  | {
+      type: 'blockedFieldGoalReturnTD';
+      clock: number;
+      names: string[];
+      pid: number;
+      t: TeamNum;
+      yds: number;
+    }
+  | {
+      type: 'blockedPuntReturnTD';
+      clock: number;
+      names: string[];
+      pid: number;
+      t: TeamNum;
       yds: number;
     };
 
@@ -107,6 +166,10 @@ export type PlayByPlayEventInput =
       t: TeamNum;
       touchback: boolean;
       yds: number;
+      // A blocked punt is a 0-yard kick that immediately becomes a
+      // turnover (or, on a return TD, a defensive score). Flag is
+      // optional so existing consumers keep working.
+      blocked?: boolean;
     }
   | {
       type: 'passIncomplete';
@@ -168,6 +231,15 @@ class PlayByPlayLogger {
   quarter = 1;
   overtimeNum = 0;
 
+  /**
+   * Optional sink for streaming events (e.g. a Web Worker bridge).
+   * Receives the same object reference that was just pushed onto
+   * `playByPlay`, so consumers can rely on identity / order.
+   * Errors thrown by the callback are swallowed so a buggy sink can
+   * never break the simulation.
+   */
+  onEvent?: (event: PlayByPlayEvent) => void;
+
   constructor(active: boolean = true) {
     this.active = active;
   }
@@ -182,13 +254,22 @@ class PlayByPlayLogger {
       this.overtimeNum = event.overtimeNum;
     }
 
-    this.playByPlay.push({ ...event });
+    const stored: PlayByPlayEvent = { ...event };
+    this.playByPlay.push(stored);
 
     if (this.isScoringEvent(event)) {
       this.scoringSummary.push({
         ...event,
         quarter: this.quarter,
       });
+    }
+
+    if (this.onEvent) {
+      try {
+        this.onEvent(stored);
+      } catch {
+        // Defensive: don't let a sink crash the sim loop.
+      }
     }
   }
 
@@ -211,9 +292,14 @@ class PlayByPlayLogger {
       'run',
       'fieldGoal',
       'extraPoint',
+      'twoPointConversion',
       'sack',
       'interception',
       'fumble',
+      'pickSix',
+      'fumbleSix',
+      'blockedFieldGoalReturnTD',
+      'blockedPuntReturnTD',
     ];
     return scoringTypes.includes(event.type);
   }
@@ -287,6 +373,11 @@ class PlayByPlayLogger {
       case 'extraPoint':
         parts.push(`${event.names[0]} ${event.made ? 'makes' : 'misses'} XP`);
         break;
+      case 'twoPointConversion':
+        parts.push(
+          `${event.names[0]} 2-pt ${event.playType} ${event.success ? 'GOOD' : 'NO GOOD'}`,
+        );
+        break;
       case 'interception':
         parts.push(`Pass intercepted by ${event.names[0]}`);
         if (event.td) parts.push('- TOUCHDOWN!');
@@ -295,6 +386,18 @@ class PlayByPlayLogger {
       case 'fumble':
         parts.push(`Fumble by ${event.names[0]}, recovered by ${event.names[1]}`);
         if (event.td) parts.push('- TOUCHDOWN!');
+        break;
+      case 'pickSix':
+        parts.push(`PICK SIX! ${event.names[0]} returns interception ${event.yds} yards for a TD`);
+        break;
+      case 'fumbleSix':
+        parts.push(`FUMBLE SIX! ${event.names[0]} returns fumble ${event.yds} yards for a TD`);
+        break;
+      case 'blockedFieldGoalReturnTD':
+        parts.push(`BLOCKED FG RETURN! ${event.names[0]} returns the block ${event.yds} yards for a TD`);
+        break;
+      case 'blockedPuntReturnTD':
+        parts.push(`BLOCKED PUNT RETURN! ${event.names[0]} returns the block ${event.yds} yards for a TD`);
         break;
       case 'kneel':
         parts.push(`${event.names[0]} kneels for -${Math.abs(event.yds)} yards`);

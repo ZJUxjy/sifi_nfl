@@ -1,7 +1,12 @@
 import { useMemo, useState } from 'react';
 import { Table, Badge, Button, Modal, Alert } from 'react-bootstrap';
-import { useGameStore } from '../stores/gameStore';
-import { getGameEngine } from '../../worker/api';
+import {
+  useTeams,
+  usePlayers,
+  useSimWeek,
+  useSchedule,
+  useWeek,
+} from '../stores/selectors';
 import type { Team } from '@common/entities';
 import type { ScheduleGame } from '../../worker/api/types';
 import GameSimView from './GameSimView';
@@ -29,21 +34,25 @@ interface DisplayScheduleGame {
 }
 
 function ScheduleView({ team }: ScheduleViewProps) {
-  const { teams, players, simWeek } = useGameStore();
-  const engine = getGameEngine();
-
-  const currentWeek = engine.getState().week;
+  const teams = useTeams();
+  const players = usePlayers();
+  const simWeek = useSimWeek();
+  // Subscribe to the reactive store slices so the component (and the memos
+  // below) re-evaluate whenever the schedule or current week change. The
+  // previous implementation called `getGameEngine().getSchedule()` directly
+  // and used `teams.length` as a trigger dep, which silently went stale after
+  // a `simWeek()` call (game results updated but `teams.length` didn't).
+  const allSchedule = useSchedule();
+  const currentWeek = useWeek();
 
   const [showGameModal, setShowGameModal] = useState(false);
   const [selectedGame, setSelectedGame] = useState<DisplayScheduleGame | null>(null);
 
-  // Get schedule from GameEngine
-  const scheduleGames = useMemo(() => {
-    const allSchedule = engine.getSchedule();
+  const scheduleGames = useMemo<ScheduleGame[]>(() => {
     return allSchedule.filter(
       g => g.homeTid === team.tid || g.awayTid === team.tid
     );
-  }, [team.tid, teams.length]); // Re-fetch when teams change
+  }, [allSchedule, team.tid]);
 
   // Build display schedule
   const schedule = useMemo(() => {

@@ -67,26 +67,29 @@ export const TEAM_NAMES = {
   ]
 };
 
+// Economic system configuration per region
+// All values in actual dollars (not thousands)
+
 export const REGION_LEAGUE_STRUCTURE = {
   firstContinent: {
     type: 'closed',
     teams: FIRST_CONTINENT_TEAMS,
-    salaryCap: 200000,
-    minPayroll: 150000,
-    luxuryPayroll: 250000,
-    minContract: 500,
-    maxContract: 30000,
+    salaryCap: 180000000,        // $180M salary cap (NFL-style)
+    minPayroll: 135000000,       // $135M floor (75% of cap)
+    luxuryPayroll: 200000000,    // $200M luxury tax threshold
+    minContract: 750000,         // $750K minimum salary
+    maxContract: 50000000,       // $50M max annual salary
     minRosterSize: 40,
     maxRosterSize: 55,
   },
   secondContinent: {
     type: 'closed',
     teams: SECOND_CONTINENT_TEAMS,
-    salaryCap: 200000,
-    minPayroll: 150000,
-    luxuryPayroll: 250000,
-    minContract: 500,
-    maxContract: 30000,
+    salaryCap: 200000000,        // $200M salary cap (slightly higher)
+    minPayroll: 150000000,       // $150M floor
+    luxuryPayroll: 220000000,    // $220M luxury tax threshold
+    minContract: 750000,         // $750K minimum salary
+    maxContract: 55000000,       // $55M max annual salary
     minRosterSize: 40,
     maxRosterSize: 55,
   },
@@ -94,22 +97,33 @@ export const REGION_LEAGUE_STRUCTURE = {
     type: 'pyramid',
     leagues: ORIGIN_CONTINENT_LEAGUES,
     teamsPerLeague: ORIGIN_CONTINENT_TEAMS_PER_LEAGUE,
-    salaryCap: null,
+    // The 3 leagues are tiered (Metropolis=0 top, Imperial=1 middle,
+    // Royal=2 bottom). After every season the worst {promotionSpots}
+    // teams of league N swap with the best {promotionSpots} of league
+    // N+1. Mirrors REGION_LEAGUE_STRUCTURE.miningIsland; consumed by
+    // OffseasonManager.applyPromotionRelegation.
+    levels: ORIGIN_CONTINENT_LEAGUES,
+    promotionSpots: 1,
+    relegationSpots: 1,
+    salaryCap: null,             // No salary cap - teams manage own finances
     minPayroll: null,
     luxuryPayroll: null,
-    minContract: 500,
-    maxContract: 30000,
+    minContract: 500000,         // $500K minimum
+    maxContract: 80000000,       // $80M max (richer teams can pay more)
     minRosterSize: 40,
     maxRosterSize: 55,
   },
   miningIsland: {
     type: 'pyramid',
     levels: 4,
-    teams: [20, 20, 20, 20],  // 4级联赛每级20队
+    teams: [20, 20, 20, 20],
     promotionSpots: MINING_ISLAND_PROMOTION_RELEGATION,
     relegationSpots: MINING_ISLAND_PROMOTION_RELEGATION,
-    minContract: 500,
-    maxContract: 30000,
+    salaryCap: 50000000,         // $50M salary cap (smaller market)
+    minPayroll: 30000000,        // $30M floor
+    luxuryPayroll: null,         // No luxury tax in mining island
+    minContract: 300000,         // $300K minimum
+    maxContract: 15000000,       // $15M max
     minRosterSize: 25,
     maxRosterSize: 40,
   }
@@ -175,7 +189,9 @@ export const FATIGUE_POS = new Set(['RB', 'WR', 'TE', 'DL', 'LB', 'CB', 'S']);
 
 export const FEWER_INJURIES_POS = new Set(['QB', 'P', 'K']);
 
-const wrap = <T>(value: T): NonEmptyArray<T> => [{ start: -Infinity, value }];
+const wrap = <T>(value: T): NonEmptyArray<{ start: number; value: T }> => [
+  { start: -Infinity, value },
+];
 
 export const gameAttributesDefaults = {
   phase: 0,

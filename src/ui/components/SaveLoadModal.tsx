@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Modal,
   Button,
@@ -9,7 +9,13 @@ import {
   Form,
   InputGroup,
 } from 'react-bootstrap';
-import { useGameStore } from '../stores/gameStore';
+import {
+  useSeason,
+  useWeek,
+  useSaveGame,
+  useLoadGame,
+  useListSaves,
+} from '../stores/selectors';
 
 interface SaveLoadModalProps {
   show: boolean;
@@ -26,7 +32,13 @@ interface SaveInfo {
 }
 
 function SaveLoadModal({ show, onHide, mode }: SaveLoadModalProps) {
-  const { season, week, saveGame, loadGame, listSaves } = useGameStore();
+  // Use fine-grained selectors instead of the whole-store subscription so the
+  // modal doesn't re-render on every unrelated store change (per D3 pattern).
+  const season = useSeason();
+  const week = useWeek();
+  const saveGame = useSaveGame();
+  const loadGame = useLoadGame();
+  const listSaves = useListSaves();
 
   const [saves, setSaves] = useState<SaveInfo[]>([]);
   const [loading, setLoading] = useState(false);
@@ -36,14 +48,12 @@ function SaveLoadModal({ show, onHide, mode }: SaveLoadModalProps) {
   const [saveName, setSaveName] = useState('');
   const [selectedSave, setSelectedSave] = useState<string | null>(null);
 
-  // Load saves list
-  useEffect(() => {
-    if (show) {
-      loadSavesList();
-    }
-  }, [show]);
-
-  const loadSavesList = async () => {
+  // `loadSavesList` is referenced by both the `show`-driven effect below and
+  // by `handleSave`, so it can't be inlined into the effect. Wrap it in
+  // useCallback (keyed on the stable `listSaves` action ref) so the function
+  // identity is stable across renders and `react-hooks/exhaustive-deps` is
+  // satisfied without re-firing the effect on every render.
+  const loadSavesList = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -69,7 +79,14 @@ function SaveLoadModal({ show, onHide, mode }: SaveLoadModalProps) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [listSaves]);
+
+  // Load saves list whenever the modal is opened.
+  useEffect(() => {
+    if (show) {
+      loadSavesList();
+    }
+  }, [show, loadSavesList]);
 
   const handleSave = async () => {
     if (!saveName.trim()) {

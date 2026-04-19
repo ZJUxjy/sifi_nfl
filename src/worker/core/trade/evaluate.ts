@@ -15,20 +15,29 @@ export interface TradeProposal {
   status: 'pending' | 'accepted' | 'rejected';
 }
 
-export function calculatePlayerValue(player: Player): number {
+/**
+ * Compute a player's trade value for the given **game** season.
+ *
+ * Previously this used `new Date().getFullYear()` to compute years
+ * remaining on the contract, so a save loaded in real-world 2026
+ * playing the in-game year 2030 (or vice versa) produced wrong /
+ * negative `yearsRemaining` and made every trade mispriced. Callers
+ * MUST pass the in-game season (engine.season / state.season).
+ */
+export function calculatePlayerValue(player: Player, gameSeason: number): number {
   const ovrWeight = player.ovr * 10;
   const ageWeight = Math.max(0, (30 - player.age) * 5);
   const potWeight = (player.pot - player.ovr) * 3;
-  
+
   let contractValue = 0;
   if (player.contract) {
-    const yearsRemaining = player.contract.exp - new Date().getFullYear();
+    const yearsRemaining = Math.max(0, player.contract.exp - gameSeason);
     contractValue = yearsRemaining * 100;
     if (player.contract.amount < 2000) {
       contractValue += 500;
     }
   }
-  
+
   return ovrWeight + ageWeight + potWeight + contractValue;
 }
 
@@ -59,12 +68,16 @@ export function evaluateTrade(proposal: TradeProposal): { fair: boolean; fromVal
   return { fair, fromValue, toValue };
 }
 
-export function createTradeAsset(type: 'player' | 'pick' | 'cash', data: Player | DraftPick | number): TradeAsset {
+export function createTradeAsset(
+  type: 'player' | 'pick' | 'cash',
+  data: Player | DraftPick | number,
+  gameSeason: number
+): TradeAsset {
   let value: number;
-  
+
   switch (type) {
     case 'player':
-      value = calculatePlayerValue(data as Player);
+      value = calculatePlayerValue(data as Player, gameSeason);
       break;
     case 'pick':
       value = calculatePickValue(data as DraftPick);
@@ -75,7 +88,7 @@ export function createTradeAsset(type: 'player' | 'pick' | 'cash', data: Player 
     default:
       value = 0;
   }
-  
+
   return {
     type,
     value,

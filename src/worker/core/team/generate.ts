@@ -1,8 +1,9 @@
-import type { Team, Player, Position, Region } from '../../../common/types';
-import type { MarketSize, TeamStrength } from '../../../common/entities';
+import type { Position, Region } from '../../../common/types';
+import type { Team, Player, MarketSize, TeamStrength } from '../../../common/entities';
 import { generate } from '../player/generate';
 import { shuffle, truncGauss, sample } from '../../../common/random';
 import { TEAM_CONFIGS } from '../../../common/teamConfig';
+import { REGION_LEAGUE_STRUCTURE } from '../../../common/constants.football';
 
 export const SCI_FI_COLORS: [string, string, string][] = [
   ['#1a237e', '#3949ab', '#5c6bc0'],
@@ -20,10 +21,10 @@ export const SCI_FI_COLORS: [string, string, string][] = [
 ];
 
 export const MARKET_CONFIG: Record<MarketSize, { budgetMult: number; cashMult: number; popLabel: string }> = {
-  huge: { budgetMult: 1.5, cashMult: 2.0, popLabel: 'Huge' },
-  large: { budgetMult: 1.2, cashMult: 1.5, popLabel: 'Large' },
+  huge: { budgetMult: 1.3, cashMult: 1.5, popLabel: 'Huge' },
+  large: { budgetMult: 1.15, cashMult: 1.25, popLabel: 'Large' },
   medium: { budgetMult: 1.0, cashMult: 1.0, popLabel: 'Medium' },
-  small: { budgetMult: 0.7, cashMult: 0.6, popLabel: 'Small' },
+  small: { budgetMult: 0.85, cashMult: 0.75, popLabel: 'Small' },
 };
 
 export const STRENGTH_CONFIG: Record<TeamStrength, { ovrBonus: number; label: string }> = {
@@ -32,6 +33,21 @@ export const STRENGTH_CONFIG: Record<TeamStrength, { ovrBonus: number; label: st
   average: { ovrBonus: 0, label: '⭐' },
   weak: { ovrBonus: -8, label: '' },
 };
+
+// Get region-specific base budget (salary cap or typical payroll)
+function getRegionBaseBudget(region: Region): number {
+  const config = REGION_LEAGUE_STRUCTURE[region as keyof typeof REGION_LEAGUE_STRUCTURE];
+  if (!config) return 100000000; // Default $100M
+
+  // For regions with salary cap, use that as base
+  if (config.salaryCap) {
+    return config.salaryCap;
+  }
+
+  // For regions without salary cap (originContinent), use a typical budget based on market
+  // This represents what a team expects to spend
+  return 150000000; // $150M typical budget for origin continent teams
+}
 
 export function generateTeam(
   tid: number,
@@ -53,8 +69,10 @@ export function generateTeam(
   const colors = shuffle([...SCI_FI_COLORS])[0];
   const marketConfig = MARKET_CONFIG[market];
 
-  const baseBudget = 200000;
-  const baseCash = 100000;
+  // Use region-specific base budget
+  const baseBudget = getRegionBaseBudget(region);
+  // Cash is a fraction of budget (working capital)
+  const baseCash = baseBudget * 0.15;
 
   return {
     tid,
@@ -94,6 +112,8 @@ export function generateRegionTeams(
   shuffledConfigs.forEach((config, i) => {
     let cid = 0;
     let did = 0;
+    let leagueIndex: number | undefined;
+    let tier: number | undefined;
 
     if (region === 'firstContinent') {
       cid = Math.floor(i / 12);
@@ -105,9 +125,12 @@ export function generateRegionTeams(
       const league = Math.floor(i / 12);
       cid = league;
       did = league * 3 + Math.floor((i % 12) / 4);
+      leagueIndex = league;
     } else if (region === 'miningIsland') {
       cid = 0;
       did = 0;
+      // Tier 1 = top division (teams 1-20), tier 4 = amateur (61-80).
+      tier = Math.floor(i / 20) + 1;
     }
 
     // For Mining Island, teams 61-80 are amateur (B League)
@@ -124,6 +147,13 @@ export function generateRegionTeams(
       config.market,
       isAmateur ? amateurStrength : config.strength
     );
+
+    if (tier !== undefined) {
+      team.tier = tier;
+    }
+    if (leagueIndex !== undefined) {
+      team.leagueIndex = leagueIndex;
+    }
 
     const minRoster = region === 'miningIsland' ? (isAmateur ? 20 : 25) : 40;
     const maxRoster = region === 'miningIsland' ? (isAmateur ? 30 : 40) : 55;
@@ -148,7 +178,8 @@ export function generateTeamPlayers(
   const rosterSize = Math.floor(Math.random() * (maxRoster - minRoster + 1)) + minRoster;
   const ovrBonus = STRENGTH_CONFIG[strength].ovrBonus;
 
-  const positionCounts: Record<Position, number> = {
+  // Caps per position for the full ideal roster (sum=58 > maxRoster, so some are truncated).
+  const positionCaps: Record<Position, number> = {
     QB: 3,
     RB: 4,
     WR: 6,
@@ -164,31 +195,60 @@ export function generateTeamPlayers(
     PR: 2,
   };
 
+  // Phase 1 must guarantee one player per starter slot in roster.getStarters,
+  // otherwise small rosterSize values silently leave CB/S/K/P empty and the
+  // depth chart returns < 20 starters (was an intermittent test failure).
+  const starterCounts: Record<Position, number> = {
+    QB: 1,
+    RB: 1,
+    WR: 3,
+    TE: 1,
+    OL: 5,
+    DL: 4,
+    LB: 3,
+    CB: 2,
+    S: 2,
+    K: 1,
+    P: 1,
+    KR: 0,
+    PR: 0,
+  };
+
+  const positionTotals: Record<Position, number> = {
+    QB: 0, RB: 0, WR: 0, TE: 0, OL: 0, DL: 0, LB: 0,
+    CB: 0, S: 0, K: 0, P: 0, KR: 0, PR: 0,
+  };
+
   let pid = 0;
-  for (const [pos, count] of Object.entries(positionCounts)) {
+  const addPlayer = (pos: Position) => {
+    const age = Math.floor(Math.random() * 15) + 21;
+    const player = generate(team.tid, age, season - (age - 21), pos, 0, isAmateur, team.region);
+    player.pid = pid++;
+    applyStrengthBonus(player, ovrBonus);
+    players.push(player);
+    positionTotals[pos]++;
+  };
+
+  // Phase 1: starter slots first so getStarters() always has someone at every position.
+  for (const [pos, count] of Object.entries(starterCounts) as [Position, number][]) {
     for (let i = 0; i < count; i++) {
       if (players.length >= rosterSize) break;
-
-      const age = Math.floor(Math.random() * 15) + 21;
-      const player = generate(team.tid, age, season - (age - 21), pos as Position, 0, isAmateur);
-      player.pid = pid++;
-
-      applyStrengthBonus(player, ovrBonus);
-
-      players.push(player);
+      addPlayer(pos);
     }
   }
 
+  // Phase 2: backups up to per-position cap, in original priority order, until rosterSize is reached.
+  for (const [pos, cap] of Object.entries(positionCaps) as [Position, number][]) {
+    while (positionTotals[pos] < cap && players.length < rosterSize) {
+      addPlayer(pos);
+    }
+  }
+
+  // Phase 3: fallback fill for very large minRoster values (defensive; sum of caps is 58).
   while (players.length < rosterSize) {
     const positions: Position[] = ['RB', 'WR', 'TE', 'DL', 'LB', 'CB', 'S'];
     const pos = sample(positions, 1)[0];
-    const age = Math.floor(Math.random() * 15) + 21;
-    const player = generate(team.tid, age, season - (age - 21), pos, 0, isAmateur);
-    player.pid = pid++;
-
-    applyStrengthBonus(player, ovrBonus);
-
-    players.push(player);
+    addPlayer(pos);
   }
 
   return players;

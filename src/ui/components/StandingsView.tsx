@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Table, Badge } from 'react-bootstrap';
-import { useGameStore } from '../stores/gameStore';
+import { useTeams } from '../stores/selectors';
 import { getGameEngine } from '../../worker/api';
 import type { Team } from '@common/entities';
 import type { StandingEntry } from '../../worker/api/types';
@@ -10,13 +10,18 @@ interface StandingsViewProps {
 }
 
 function StandingsView({ team }: StandingsViewProps) {
-  const { teams } = useGameStore();
+  const teams = useTeams();
   const engine = getGameEngine();
 
-  // Get standings from GameEngine
-  const standings = useMemo(() => {
-    return engine.getStandings(team.region);
-  }, [team.region, teams.length]);
+  // Computed inline (not memoized): `engine` is a referentially stable
+  // singleton whose internal mutable state is not part of React's dep graph,
+  // so no honest useMemo dep array can express "engine standings changed".
+  // The previous `[team.region, teams.length]` deps silently went stale
+  // after `simWeek()` (game results updated, but `teams.length` did not).
+  // The `useTeams()` subscription above triggers a re-render whenever the
+  // store's teams slice changes, and `getStandings()` is cheap (single pass
+  // over ~30-100 teams), so recomputing every render is fine.
+  const standings = engine.getStandings(team.region);
 
   // Group by league if origin continent or mining island
   const groupedStandings = useMemo(() => {

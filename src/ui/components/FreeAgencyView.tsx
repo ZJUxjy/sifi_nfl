@@ -13,12 +13,7 @@ import {
 } from 'react-bootstrap';
 import { useGameStore } from '../stores/gameStore';
 import { getGameEngine } from '../../worker/api';
-import {
-  generateContractDemand,
-  evaluateOffer,
-  signFreeAgent,
-  type FreeAgentDemand,
-} from '@worker/core/freeAgent';
+import type { FreeAgentDemand } from '../../worker/api/types';
 import type { Team, Player } from '@common/entities';
 
 interface FreeAgencyViewProps {
@@ -110,7 +105,7 @@ function FreeAgencyView({ team, onSigningComplete }: FreeAgencyViewProps) {
 
   const handleMakeOffer = (player: Player) => {
     setSelectedPlayer(player);
-    const demand = generateContractDemand(player);
+    const demand = engine.getFreeAgentDemand(player);
     setContractDemand(demand);
     setOfferSalary(demand.minSalary);
     setOfferYears(demand.minYears);
@@ -121,7 +116,7 @@ function FreeAgencyView({ team, onSigningComplete }: FreeAgencyViewProps) {
   const handleSubmitOffer = () => {
     if (!selectedPlayer || !contractDemand) return;
 
-    const result = evaluateOffer(
+    const result = engine.evaluateFreeAgentOffer(
       selectedPlayer,
       contractDemand,
       {
@@ -134,10 +129,8 @@ function FreeAgencyView({ team, onSigningComplete }: FreeAgencyViewProps) {
     setOfferResult(result);
 
     if (result.accepted) {
-      // Sign the player
-      signFreeAgent(selectedPlayer, team, offerSalary, offerYears, season);
+      engine.commitFreeAgentSigning(selectedPlayer, team, offerSalary, offerYears);
 
-      // Update state
       syncState();
       setShowOfferModal(false);
       setSelectedPlayer(null);
@@ -226,7 +219,7 @@ function FreeAgencyView({ team, onSigningComplete }: FreeAgencyViewProps) {
             </thead>
             <tbody>
               {filteredAgents.map((player) => {
-                const demand = generateContractDemand(player);
+                const demand = engine.getFreeAgentDemand(player);
                 const canAfford = capSpace >= demand.minSalary;
 
                 return (

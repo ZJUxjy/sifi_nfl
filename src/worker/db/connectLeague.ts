@@ -1,12 +1,12 @@
 import { openDB, DBSchema, IDBPDatabase } from '@dumbmatter/idb';
+import type { DraftPick } from '../../common/types';
+import type { GameAttributesLeague } from '../../common/types.football';
 import type {
   Player,
   Team,
   Game,
   ScheduleGame,
-  DraftPick,
   Event,
-  GameAttributesLeague,
   PlayoffSeries,
   TeamSeason,
   TeamStats,
@@ -20,7 +20,7 @@ import type {
   PlayerFeat,
   SavedTradingBlock,
   ScheduledEvent,
-} from '../../common/types';
+} from '../../common/entities';
 
 export interface LeagueDB extends DBSchema {
   players: {
@@ -92,7 +92,7 @@ export interface LeagueDB extends DBSchema {
     key: number;
     value: TeamStats;
     indexes: {
-      'byPlayoffsTid': [boolean, number];
+      'byPlayoffsTid': [number, number];
     };
   };
   seasonLeaders: {

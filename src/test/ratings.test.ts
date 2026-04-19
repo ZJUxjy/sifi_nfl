@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { calculateOvr, calculateAllOvrs, calculateCompositeRatings } from '../worker/core/player/ovr';
-import type { Player, Position } from '../common/types';
+import type { Position } from '../common/types';
+import type { Player } from '../common/entities';
 
 const mockPlayerRatings = {
   hgt: 70,

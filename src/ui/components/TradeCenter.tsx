@@ -14,20 +14,11 @@ import {
 } from 'react-bootstrap';
 import { useGameStore } from '../stores/gameStore';
 import { getGameEngine } from '../../worker/api';
-import {
-  calculatePlayerValue,
-  calculatePickValue,
-  evaluateTrade,
-  createTradeAsset,
-  proposeTrade,
-  shouldAcceptTrade,
-  executeTrade,
-  isPlayerTradable,
-  type TradeAsset,
-  type TradeProposal,
-} from '@worker/core/trade';
+import type {
+  TradeProposalInternal as TradeProposal,
+  DraftPick,
+} from '../../worker/api/types';
 import type { Team, Player } from '@common/entities';
-import type { DraftPick } from '@common/types';
 
 interface TradeCenterProps {
   team: Team;
@@ -79,15 +70,20 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
     return allPlayers.filter(p => p.tid === selectedTeam.tid);
   }, [selectedTeam, engine]);
 
-  // Get draft picks for both teams
+  // Get draft picks for both teams (only for First/Second Continent teams)
   const myPicks = useMemo(() => {
-    // TODO: Implement draft pick storage and retrieval
-    return [] as DraftPick[];
+    if (team.region !== 'firstContinent' && team.region !== 'secondContinent') {
+      return [] as DraftPick[];
+    }
+    return engine.getDraftPicks(team.tid);
   }, [team, engine]);
 
   const theirPicks = useMemo(() => {
-    // TODO: Implement draft pick storage and retrieval
-    return [] as DraftPick[];
+    if (!selectedTeam) return [];
+    if (selectedTeam.region !== 'firstContinent' && selectedTeam.region !== 'secondContinent') {
+      return [] as DraftPick[];
+    }
+    return engine.getDraftPicks(selectedTeam.tid);
   }, [selectedTeam, engine]);
 
   // Add asset to trade
@@ -122,12 +118,12 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
     const proposal: TradeProposal = {
       fromTeam: team.tid,
       toTeam: selectedTeam.tid,
-      fromAssets: myAssets.map(a => createTradeAsset(a.type, a.data)),
-      toAssets: theirAssets.map(a => createTradeAsset(a.type, a.data)),
+      fromAssets: myAssets.map(a => engine.buildTradeAsset(a.type, a.data)),
+      toAssets: theirAssets.map(a => engine.buildTradeAsset(a.type, a.data)),
       status: 'pending',
     };
 
-    const evaluation = evaluateTrade(proposal);
+    const evaluation = engine.evaluateAssetTrade(proposal);
     const myTotalValue = myAssets.reduce((sum, a) => sum + a.value, 0);
     const theirTotalValue = theirAssets.reduce((sum, a) => sum + a.value, 0);
 
@@ -148,12 +144,12 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
     const proposal: TradeProposal = {
       fromTeam: team.tid,
       toTeam: selectedTeam.tid,
-      fromAssets: myAssets.map(a => createTradeAsset(a.type, a.data)),
-      toAssets: theirAssets.map(a => createTradeAsset(a.type, a.data)),
+      fromAssets: myAssets.map(a => engine.buildTradeAsset(a.type, a.data)),
+      toAssets: theirAssets.map(a => engine.buildTradeAsset(a.type, a.data)),
       status: 'pending',
     };
 
-    const accepted = shouldAcceptTrade(proposal, true);
+    const accepted = engine.aiAcceptsTrade(proposal);
 
     setAiResponse({
       accepted,
@@ -172,34 +168,23 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
       return;
     }
 
-    const proposal: TradeProposal = {
-      fromTeam: team.tid,
-      toTeam: selectedTeam.tid,
-      fromAssets: myAssets.map(a => createTradeAsset(a.type, a.data)),
-      toAssets: theirAssets.map(a => createTradeAsset(a.type, a.data)),
-      status: 'accepted',
-    };
-
-    const allPlayers = engine.getPlayers();
-
-    // Execute trade on players
     for (const asset of myAssets) {
       if (asset.type === 'player') {
         const player = asset.data as Player;
-        const realPlayer = allPlayers.find(p => p.pid === player.pid);
-        if (realPlayer) {
-          realPlayer.tid = selectedTeam.tid;
-        }
+        engine.transferPlayer(player.pid, selectedTeam.tid);
+      } else if (asset.type === 'pick') {
+        const pick = asset.data as DraftPick;
+        engine.tradeDraftPick(pick.dpid, team.tid, selectedTeam.tid);
       }
     }
 
     for (const asset of theirAssets) {
       if (asset.type === 'player') {
         const player = asset.data as Player;
-        const realPlayer = allPlayers.find(p => p.pid === player.pid);
-        if (realPlayer) {
-          realPlayer.tid = team.tid;
-        }
+        engine.transferPlayer(player.pid, team.tid);
+      } else if (asset.type === 'pick') {
+        const pick = asset.data as DraftPick;
+        engine.tradeDraftPick(pick.dpid, selectedTeam.tid, team.tid);
       }
     }
 
@@ -224,7 +209,7 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
         return `${p.name} (${p.pos}) - OVR: ${p.ovr}`;
       case 'pick':
         const pick = asset.data as DraftPick;
-        return `${pick.round === 1 ? 'Rd' : 'Rnd'} ${pick.round} #${pick.pick}`;
+        return `R${pick.round} #${pick.pick} (${pick.season})`;
       case 'cash':
         return `$${(asset.data as number)}K`;
       default:
@@ -289,7 +274,7 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
                       </thead>
                       <tbody>
                         {myTeamPlayers
-                          .filter(p => isPlayerTradable(p))
+                          .filter(p => engine.isPlayerTradable(p))
                           .map(p => {
                             const isSelected = myAssets.some(
                               a => a.type === 'player' && (a.data as Player).pid === p.pid
@@ -314,7 +299,7 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
                                           {
                                             type: 'player',
                                             data: p,
-                                            value: calculatePlayerValue(p),
+                                            value: engine.getPlayerTradeValue(p),
                                           },
                                           true
                                         );
@@ -331,6 +316,69 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
                     </Table>
                   </div>
                 </div>
+
+                {/* My Draft Picks Selection */}
+                {myPicks.length > 0 && (
+                  <div className="mb-3">
+                    <h6>Select Draft Picks</h6>
+                    <div style={{ maxHeight: 150, overflowY: 'auto' }}>
+                      <Table size="sm">
+                        <thead>
+                          <tr>
+                            <th>Round</th>
+                            <th>Pick</th>
+                            <th>Value</th>
+                            <th>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {myPicks.map(pick => {
+                            const isSelected = myAssets.some(
+                              a => a.type === 'pick' && (a.data as DraftPick).dpid === pick.dpid
+                            );
+                            const pickValue = engine.getPickTradeValue(pick);
+                            return (
+                              <tr key={pick.dpid}>
+                                <td>
+                                  <Badge bg={pick.round === 1 ? 'primary' : 'secondary'}>
+                                    R{pick.round}
+                                  </Badge>
+                                </td>
+                                <td>#{pick.pick}</td>
+                                <td>{pickValue}</td>
+                                <td>
+                                  <Button
+                                    size="sm"
+                                    variant={isSelected ? 'danger' : 'outline-primary'}
+                                    onClick={() => {
+                                      if (!isSelected) {
+                                        addAsset(
+                                          {
+                                            type: 'pick',
+                                            data: pick,
+                                            value: pickValue,
+                                          },
+                                          true
+                                        );
+                                      } else {
+                                        const idx = myAssets.findIndex(
+                                          a => a.type === 'pick' && (a.data as DraftPick).dpid === pick.dpid
+                                        );
+                                        if (idx >= 0) removeAsset(idx, true);
+                                      }
+                                    }}
+                                  >
+                                    {isSelected ? 'Remove' : 'Add'}
+                                  </Button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </Table>
+                    </div>
+                  </div>
+                )}
 
                 {/* Selected Assets */}
                 {myAssets.length > 0 && (
@@ -378,7 +426,7 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
                       </thead>
                       <tbody>
                         {theirTeamPlayers
-                          .filter(p => isPlayerTradable(p))
+                          .filter(p => engine.isPlayerTradable(p))
                           .map(p => {
                             const isSelected = theirAssets.some(
                               a => a.type === 'player' && (a.data as Player).pid === p.pid
@@ -401,7 +449,7 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
                                           {
                                             type: 'player',
                                             data: p,
-                                            value: calculatePlayerValue(p),
+                                            value: engine.getPlayerTradeValue(p),
                                           },
                                           false
                                         );
@@ -418,6 +466,69 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
                     </Table>
                   </div>
                 </div>
+
+                {/* Their Draft Picks Selection */}
+                {theirPicks.length > 0 && (
+                  <div className="mb-3">
+                    <h6>Select Draft Picks</h6>
+                    <div style={{ maxHeight: 150, overflowY: 'auto' }}>
+                      <Table size="sm">
+                        <thead>
+                          <tr>
+                            <th>Round</th>
+                            <th>Pick</th>
+                            <th>Value</th>
+                            <th>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {theirPicks.map(pick => {
+                            const isSelected = theirAssets.some(
+                              a => a.type === 'pick' && (a.data as DraftPick).dpid === pick.dpid
+                            );
+                            const pickValue = engine.getPickTradeValue(pick);
+                            return (
+                              <tr key={pick.dpid}>
+                                <td>
+                                  <Badge bg={pick.round === 1 ? 'primary' : 'secondary'}>
+                                    R{pick.round}
+                                  </Badge>
+                                </td>
+                                <td>#{pick.pick}</td>
+                                <td>{pickValue}</td>
+                                <td>
+                                  <Button
+                                    size="sm"
+                                    variant={isSelected ? 'danger' : 'outline-primary'}
+                                    onClick={() => {
+                                      if (!isSelected) {
+                                        addAsset(
+                                          {
+                                            type: 'pick',
+                                            data: pick,
+                                            value: pickValue,
+                                          },
+                                          false
+                                        );
+                                      } else {
+                                        const idx = theirAssets.findIndex(
+                                          a => a.type === 'pick' && (a.data as DraftPick).dpid === pick.dpid
+                                        );
+                                        if (idx >= 0) removeAsset(idx, false);
+                                      }
+                                    }}
+                                  >
+                                    {isSelected ? 'Remove' : 'Add'}
+                                  </Button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </Table>
+                    </div>
+                  </div>
+                )}
 
                 {/* Selected Assets */}
                 {theirAssets.length > 0 && (

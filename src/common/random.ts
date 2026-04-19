@@ -1,9 +1,43 @@
+/**
+ * Seedable PRNG (mulberry32).
+ *
+ * Goal: every random helper in this module pulls from a single seedable
+ * stream so the simulation can be made reproducible (e.g. for tests
+ * and replays). Production callers don't need to do anything new -
+ * the module seeds itself from Math.random() at import time, so default
+ * behaviour stays "random". Tests and the replay layer call setSeed(n)
+ * to pin the stream.
+ *
+ * Note: this only seeds the helpers exported from this file. There are
+ * still a number of bare Math.random() call sites in business code
+ * (GameSim, draft pool, ...). Migrating them is tracked separately
+ * in the P2 phase.
+ */
+
+let _state = (Math.random() * 0xffffffff) >>> 0;
+
+function next(): number {
+  _state = (_state + 0x6d2b79f5) >>> 0;
+  let t = _state;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
+export function setSeed(seed: number): void {
+  _state = seed >>> 0;
+}
+
+export function rand(): number {
+  return next();
+}
+
 export function random(num: number): number {
-  return Math.floor(Math.random() * num);
+  return Math.floor(next() * num);
 }
 
 export function randInt(min: number, max: number): number {
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+  return Math.floor(next() * (max - min + 1)) + min;
 }
 
 export function bound(value: number, min: number, max: number): number {
@@ -11,12 +45,12 @@ export function bound(value: number, min: number, max: number): number {
 }
 
 export function coinFlip(): boolean {
-  return Math.random() < 0.5;
+  return next() < 0.5;
 }
 
 export function truncGauss(mean: number, sd: number, min?: number, max?: number): number {
-  const u1 = 1 - Math.random();
-  const u2 = 1 - Math.random();
+  const u1 = 1 - next();
+  const u2 = 1 - next();
   const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
   let result = z * sd + mean;
 
@@ -30,7 +64,7 @@ export function truncGauss(mean: number, sd: number, min?: number, max?: number)
   return Math.round(result);
 }
 
-export function sample<T>(array: T[], num?: number): T[] {
+export function sample<T>(array: readonly T[], num?: number): T[] {
   if (!num || num >= array.length) {
     return [...array];
   }
@@ -38,14 +72,14 @@ export function sample<T>(array: T[], num?: number): T[] {
   return shuffled.slice(0, num);
 }
 
-export function choice<T>(array: T[]): T {
-  return array[Math.floor(Math.random() * array.length)];
+export function choice<T>(array: readonly T[]): T {
+  return array[Math.floor(next() * array.length)];
 }
 
-export function shuffle<T>(array: T[]): T[] {
+export function shuffle<T>(array: readonly T[]): T[] {
   const result = [...array];
   for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(next() * (i + 1));
     [result[i], result[j]] = [result[j], result[i]];
   }
   return result;

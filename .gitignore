@@ -61,3 +61,7 @@ Thumbs.db
 
 # Vitest
 .vitest/
+
+# Claude CLI / Cursor agent local files
+.claude
+.claude.json

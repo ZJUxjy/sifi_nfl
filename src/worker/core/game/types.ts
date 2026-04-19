@@ -1,4 +1,5 @@
-import type { Player, Team, Position, GamePlayer } from '../../../common/types';
+import type { Position, PlayerInjury } from '../../../common/types';
+import type { Player, Team, GamePlayer } from '../../../common/entities';
 
 export type TeamNum = 0 | 1;
 
@@ -29,6 +30,9 @@ export type PlayerGameSim = GamePlayer & {
   compositeRating: Record<CompositeRating, number>;
   energy: number;
   ptModifier: number;
+  // Optional in-game injury state. Set by GameSim.checkForInjury and the
+  // helpers in core/game/injuries.ts; cleared by processInjuryRecovery.
+  injury?: PlayerInjury;
 };
 
 export type PlayersOnField = Partial<Record<Position, PlayerGameSim[]>>;

@@ -1,4 +1,4 @@
-import type { Player } from '@common/entities';
+import type { Player, Team } from '@common/entities';
 import type { Region, DraftPick } from '@common/types';
 import { generate, generatePotential } from '../player/generate';
 import { calculateBaseSalary } from '../contract/negotiation';
@@ -70,14 +70,17 @@ export function calculateDraftOrder(
 }
 
 export function generateDraftPicks(
-  teams: { tid: number; region: Region }[],
+  teams: { tid: number; region: Region; won: number; lost: number }[],
   season: number,
   numRounds: number = 7
 ): DraftPick[] {
   const picks: DraftPick[] = [];
-  const order = calculateDraftOrder(teams.map(t => ({ ...t, won: 0, lost: 0 })), season);
-  
-  let dpid = 1;
+  const order = calculateDraftOrder(teams, season);
+
+  // Old code used `let dpid = 1`, which collided across seasons (every
+  // season's pick #1 had dpid 1). Namespacing by season keeps dpids
+  // globally unique up to 999 picks per season.
+  let dpid = season * 1000 + 1;
   for (let round = 1; round <= numRounds; round++) {
     for (let i = 0; i < order.length; i++) {
       picks.push({
@@ -90,7 +93,7 @@ export function generateDraftPicks(
       });
     }
   }
-  
+
   return picks;
 }
 
@@ -115,7 +118,6 @@ export function selectPlayer(
     incentives: 0,
     signingBonus: Math.round(rookieSalary * 0.5),
     guaranteed: Math.round(rookieSalary * rookieContractYears * 0.8),
-    options: [],
     noTrade: false,
   };
   
@@ -124,24 +126,30 @@ export function selectPlayer(
 
 export function getEligiblePlayersForOriginDraft(
   players: Player[],
+  teams: Pick<Team, 'tid' | 'region'>[],
   season: number
 ): Player[] {
+  const tidToRegion = new Map<number, Region>();
+  for (const t of teams) tidToRegion.set(t.tid, t.region);
+
   return players.filter(player => {
     if (player.tid === undefined) return false;
-    if (player.region === 'originContinent') return false;
-    
-    const eligibility = ORIGIN_DRAFT_ELIGIBILITY[player.region];
+    const region = tidToRegion.get(player.tid);
+    if (!region) return false;
+    if (region === 'originContinent') return false;
+
+    const eligibility = ORIGIN_DRAFT_ELIGIBILITY[region as keyof typeof ORIGIN_DRAFT_ELIGIBILITY];
     if (!eligibility) return false;
-    
-    if (eligibility.minAge && player.age < eligibility.minAge) {
+
+    if ('minAge' in eligibility && eligibility.minAge && player.age < eligibility.minAge) {
       return false;
     }
-    
+
     const seasonsPlayed = season - player.draft.year;
     if (eligibility.minSeasons && seasonsPlayed < eligibility.minSeasons) {
       return false;
     }
-    
+
     return true;
   });
 }
@@ -171,7 +179,6 @@ export function runOriginDraft(
       incentives: 0,
       signingBonus: Math.round(winningBid.bid * 0.3),
       guaranteed: Math.round(winningBid.bid * 2),
-      options: [],
       noTrade: false,
     };
     

@@ -1,10 +1,42 @@
 /**
  * SIFI NFL API Types
- * 统一的类型定义，供 GameEngine、Store 和组件使用
+ *
+ * Single source of truth for the type vocabulary that the UI / CLI
+ * are allowed to depend on. Anything UI / CLI imports from
+ * `@worker/core/...` is a layering violation; instead, re-export it
+ * from here and let consumers import from `@worker/api/types`. The
+ * ESLint `no-restricted-imports` rule enforces this boundary.
  */
 
 import type { Team, Player } from '@common/entities';
-import type { Region, Phase, Position } from '@common/types';
+import type { Region, Phase, Position, DraftPick } from '@common/types';
+import type { PlayByPlayEvent as InternalPlayByPlayEvent } from '@worker/core/game/PlayByPlayLogger';
+
+// Re-exports of internal worker types so UI / CLI never need to
+// reach into @worker/core directly.
+export type { PlayerGameSim, TeamGameSim, TeamNum } from '@worker/core/game/types';
+export type { PlayByPlayEvent } from '@worker/core/game/PlayByPlayLogger';
+export type { OffseasonResult, OffseasonEvent } from '@worker/core/season/offseason';
+export type {
+  TradeAsset,
+  TradeProposal as TradeProposalInternal,
+} from '@worker/core/trade/evaluate';
+export type { DraftProspect as DraftProspectInternal } from '@worker/core/draft';
+export type { FreeAgentDemand } from '@worker/core/freeAgent';
+export type {
+  ImperialCupMatch,
+  ImperialCupSeason,
+  ImperialCupRound,
+  ImperialCupHistory,
+} from '@worker/core/imperialCup';
+export type {
+  PlayoffBracket,
+  PlayoffMatchup,
+  DoubleEliminationBracket,
+  DoubleEliminationRound,
+} from '@worker/core/playoffs';
+export type { StatsManager } from '@worker/core/stats/StatsManager';
+export type { GameSim } from '@worker/core/game/GameSim';
 
 // === 核心状态 ===
 export interface GameState {
@@ -21,6 +53,19 @@ export interface GameState {
   games: any[];
   schedule: ScheduleGame[];
   lastGame: GameResult | null;
+  draftPicks: DraftPick[];
+  originDraftResults: OriginDraftResult[];
+  teamFinances: Map<number, TeamFinances>;
+}
+
+// === 起源选秀结果 ===
+export interface OriginDraftResult {
+  season: number;
+  playerPid: number;
+  fromTid: number;
+  toTid: number;
+  bidAmount: number;
+  compensation: number;
 }
 
 export interface NewGameOptions {
@@ -68,19 +113,14 @@ export interface GameResult {
   homeScore: number;
   awayScore: number;
   winner: number;
-  playByPlay: PlayByPlayEvent[];
+  playByPlay: InternalPlayByPlayEvent[];
   scoringSummary: ScoringEvent[];
   penalties: PenaltySummary[];
   injuries: InjurySummary[];
 }
 
-export interface PlayByPlayEvent {
-  clock: number;
-  quarter: number;
-  type: string;
-  t?: 0 | 1;
-  [key: string]: any;
-}
+// PlayByPlayEvent intentionally re-exported above from
+// @worker/core/game/PlayByPlayLogger as the single source of truth.
 
 export interface ScoringEvent {
   team: string;
@@ -152,14 +192,11 @@ export interface ContractOffer {
 }
 
 // === 选秀 ===
-export interface DraftPick {
-  dpid: number;
-  tid: number;
-  originalTid: number;
-  round: number;
-  pick: number;
-  season: number;
-}
+// DraftPick is defined in @common/types as the single source of truth
+// (its `season` field also accepts the special string 'originDraft').
+// The API layer just re-exports it so consumers can keep importing from
+// @worker/api/types without coupling to the common module.
+export type { DraftPick };
 
 export interface CombineResults {
   fortyTime: number;

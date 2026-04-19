@@ -19,7 +19,7 @@ const REGIONS: { id: Region; name: string; description: string; teams: number }[
 ];
 
 function MainMenu({ onStartGame }: MainMenuProps) {
-  const { loading, initGame, resetGame, teams: storeTeams } = useGameStore();
+  const { loading, initGame, resetGame, teams: storeTeams, season: engineSeason } = useGameStore();
   const currentTeam = useUserTeam();
 
   const [showNewGame, setShowNewGame] = useState(false);
@@ -39,9 +39,14 @@ function MainMenu({ onStartGame }: MainMenuProps) {
     setIsInitializing(true);
 
     try {
+      // Source the cache key from the engine so load/save stay in sync as
+      // the in-game year advances — never re-introduce a hardcoded literal
+      // here (P2 D2).
+      const season = engineSeason;
+
       // Try to load cached data first
       const { loadWorldData } = await import('@worker/api/storage');
-      const cachedData = await loadWorldData();
+      const cachedData = await loadWorldData(season);
 
       if (cachedData && cachedData.teams && cachedData.teams.length > 0) {
         console.log('Using cached world data for team selection');
@@ -57,7 +62,6 @@ function MainMenu({ onStartGame }: MainMenuProps) {
         const { initDB, saveWorldData } = await import('@worker/api/storage');
         await initDB();
 
-        const season = 2025;
         const freeAgents: Player[] = [];
 
         await saveWorldData({

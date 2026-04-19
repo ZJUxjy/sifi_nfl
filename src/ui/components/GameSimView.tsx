@@ -1,15 +1,21 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { Card, Button, ButtonGroup, Form, Alert, Spinner, Row, Col } from 'react-bootstrap';
-import { GameSim } from '@worker/core/game/GameSim';
-import { calculateCompositeRatings } from '@worker/core/player/ovr';
-import type { TeamGameSim, PlayerGameSim, TeamNum } from '@worker/core/game/types';
-import type { PlayByPlayEvent } from '@worker/core/game/PlayByPlayLogger';
+import { Card, Button, ButtonGroup, Alert, Spinner, Row, Col } from 'react-bootstrap';
+import { getGameEngine } from '../../worker/api';
+import type {
+  TeamNum,
+  PlayByPlayEvent,
+} from '@worker/api/types';
 import type { Team, Player } from '@common/entities';
 import Scoreboard from './Scoreboard';
 import PlayByPlayView from './PlayByPlayView';
 import GameStatsView from './GameStatsView';
-
-type SpeedSetting = 'instant' | 'fast' | 'normal' | 'slow';
+import SimWorker from '../workers/simWorker?worker';
+import { handleWorkerMessage } from '../workers/simWorkerClient';
+import type {
+  SimRequest,
+  SimResponse,
+  SimSpeed,
+} from '../workers/simWorker.protocol';
 
 interface GameSimViewProps {
   homeTeam: Team;
@@ -20,72 +26,10 @@ interface GameSimViewProps {
   onBack?: () => void;
 }
 
-// Convert Player to PlayerGameSim format
-function convertPlayerToGameSim(player: Player): PlayerGameSim {
-  const compositeRating = calculateCompositeRatings(player);
-
-  return {
-    pid: player.pid,
-    name: player.name,
-    pos: player.pos,
-    hgt: player.hgt,
-    stre: player.stre,
-    spd: player.spd,
-    endu: player.endu,
-    thv: player.thv,
-    thp: player.thp,
-    tha: player.tha,
-    bsc: player.bsc,
-    elu: player.elu,
-    rtr: player.rtr,
-    hnd: player.hnd,
-    rbk: player.rbk,
-    pbk: player.pbk,
-    pcv: player.pcv,
-    tck: player.tck,
-    prs: player.prs,
-    rns: player.rns,
-    kpw: player.kpw,
-    kac: player.kac,
-    ppw: player.ppw,
-    pac: player.pac,
-    fuzz: player.fuzz,
-    ovr: player.ovr,
-    pot: player.pot,
-    stat: {},
-    compositeRating: compositeRating as any,
-    energy: 100,
-    ptModifier: 1,
-    injury: player.injury,
-  };
-}
-
-// Convert Team to TeamGameSim format
-function convertTeamToGameSim(team: Team, players: Player[]): TeamGameSim {
-  const gameSimPlayers = players.map(convertPlayerToGameSim);
-
-  // Build depth chart
-  const depth: Record<string, PlayerGameSim[]> = {};
-  const positions = ['QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'CB', 'S', 'K', 'P', 'KR', 'PR'];
-
-  for (const pos of positions) {
-    depth[pos] = gameSimPlayers
-      .filter(p => p.pos === pos)
-      .sort((a, b) => b.ovr - a.ovr);
-  }
-
-  return {
-    id: team.tid,
-    stat: { pts: 0 },
-    player: gameSimPlayers,
-    compositeRating: {},
-    depth,
-  };
-}
-
 function GameSimView({ homeTeam, awayTeam, homePlayers, awayPlayers, onComplete, onBack }: GameSimViewProps) {
+  const engine = getGameEngine();
   const [gameState, setGameState] = useState<'pregame' | 'playing' | 'paused' | 'complete'>('pregame');
-  const [speed, setSpeed] = useState<SpeedSetting>('normal');
+  const [speed, setSpeed] = useState<SimSpeed>('normal');
   const [quarter, setQuarter] = useState(1);
   const [clock, setClock] = useState(15);
   const [scores, setScores] = useState<[number, number]>([0, 0]);
@@ -95,189 +39,128 @@ function GameSimView({ homeTeam, awayTeam, homePlayers, awayPlayers, onComplete,
   const [possession, setPossession] = useState<TeamNum | undefined>(undefined);
   const [playByPlay, setPlayByPlay] = useState<PlayByPlayEvent[]>([]);
   const [isOvertime, setIsOvertime] = useState(false);
-
-  const [gameSim, setGameSim] = useState<GameSim | null>(null);
   const [finalResult, setFinalResult] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const simulationRef = useRef<number | null>(null);
-  const simulationQueueRef = useRef<PlayByPlayEvent[]>([]);
+  const workerRef = useRef<Worker | null>(null);
+  const gidRef = useRef<number>(0);
 
   const teamNames: [string, string] = [homeTeam.name, awayTeam.name];
   const teamColors: [[string, string, string], [string, string, string]] = [homeTeam.colors, awayTeam.colors];
 
-  // Initialize game
-  const initializeGame = useCallback(() => {
-    const homeTeamSim = convertTeamToGameSim(homeTeam, homePlayers);
-    const awayTeamSim = convertTeamToGameSim(awayTeam, awayPlayers);
+  const post = useCallback((msg: SimRequest) => {
+    workerRef.current?.postMessage(msg);
+  }, []);
 
-    const game = new GameSim({
-      gid: Date.now(),
-      day: 1,
-      teams: [homeTeamSim, awayTeamSim],
-      quarterLength: 15,
-      numPeriods: 4,
-    });
+  // Initialise the worker on mount; tear it down on unmount.
+  useEffect(() => {
+    const w = new SimWorker();
+    workerRef.current = w;
 
-    setGameSim(game);
+    w.onmessage = (e: MessageEvent<SimResponse>) => {
+      // Drop stale messages from a prior run (Play Again / Reset /
+      // Pause+Resume races). Reads `gidRef.current` live — never close
+      // over `gid` from React state — so the filter sees the latest
+      // run id even after this handler was bound on an earlier render.
+      // Review Fixlist §11.
+      const msg = handleWorkerMessage(gidRef.current, e.data);
+      if (!msg) return;
+      switch (msg.type) {
+        case 'event': {
+          setPlayByPlay(prev => [...prev, msg.event]);
+          setQuarter(msg.state.quarter);
+          setClock(msg.state.clock);
+          setScores(msg.state.scores);
+          setDown(msg.state.down);
+          setToGo(msg.state.toGo);
+          setScrimmage(msg.state.scrimmage);
+          setPossession(msg.state.possession);
+          setIsOvertime(msg.state.isOvertime);
+          break;
+        }
+        case 'done': {
+          setFinalResult(msg.result);
+          setPlayByPlay(msg.playByPlay);
+          setGameState('complete');
+          if (onComplete) {
+            onComplete({
+              ...msg.result,
+              playByPlay: msg.playByPlay,
+            });
+          }
+          break;
+        }
+        case 'error': {
+          setError(msg.message);
+          setGameState('paused');
+          break;
+        }
+        case 'ack':
+          break;
+      }
+    };
+
+    return () => {
+      w.terminate();
+      workerRef.current = null;
+    };
+  }, [onComplete]);
+
+  const startGame = useCallback(() => {
+    if (!workerRef.current) return;
+    const gid = Date.now();
+    gidRef.current = gid;
+
+    const homeSim = engine.convertTeamToGameSim(homeTeam, homePlayers);
+    const awaySim = engine.convertTeamToGameSim(awayTeam, awayPlayers);
+
+    setPlayByPlay([]);
     setScores([0, 0]);
     setQuarter(1);
     setClock(15);
-    setPlayByPlay([]);
-    setDown(undefined);
-    setToGo(undefined);
-    setScrimmage(undefined);
     setIsOvertime(false);
-  }, [homeTeam, awayTeam, homePlayers, awayPlayers]);
-
-  // Run simulation loop
-  const runSimulationStep = useCallback(() => {
-    if (!gameSim || gameState !== 'playing') return;
-
-    const stepsPerFrame: Record<SpeedSetting, number> = {
-      instant: 50,
-      fast: 10,
-      normal: 1,
-      slow: 1,
-    };
-
-    const delays: Record<SpeedSetting, number> = {
-      instant: 0,
-      fast: 50,
-      normal: 500,
-      slow: 1500,
-    };
-
-    const steps = stepsPerFrame[speed];
-    const delay = delays[speed];
-
-    // Store original playByPlay logger
-    const originalEvents = [...gameSim.playByPlayLogger.playByPlay];
-
-    for (let i = 0; i < steps; i++) {
-      if (gameSim.clock <= 0 && !gameSim.playUntimedPossession) {
-        if (gameSim.quarter < 4) {
-          gameSim.quarter++;
-          gameSim.clock = 15;
-        } else {
-          // Game over
-          break;
-        }
-      }
-
-      gameSim.simPlay();
-    }
-
-    // Get new events
-    const newEvents = gameSim.playByPlayLogger.playByPlay.slice(originalEvents.length);
-
-    // Update state
-    setQuarter(gameSim.quarter);
-    setClock(gameSim.clock);
-    setScores([gameSim.team[0].stat.pts, gameSim.team[1].stat.pts]);
-    setDown(gameSim.down);
-    setToGo(gameSim.toGo);
-    setScrimmage(gameSim.scrimmage);
-    setPossession(gameSim.o);
-    setIsOvertime(gameSim.overtimes > 0);
-
-    // Add new events to play-by-play
-    if (newEvents.length > 0) {
-      setPlayByPlay(prev => [...prev, ...newEvents]);
-    }
-
-    // Check if game is over
-    if (speed === 'instant' && gameSim.clock <= 0 && gameSim.quarter >= 4) {
-      // Continue checking for overtime
-      while (gameSim.team[0].stat.pts === gameSim.team[1].stat.pts && gameSim.overtimes < gameSim.maxOvertimes) {
-        gameSim.simOvertime();
-        gameSim.overtimes++;
-      }
-    }
-
-    const isGameOver = gameSim.clock <= 0 && gameSim.quarter >= 4 &&
-      (gameSim.team[0].stat.pts !== gameSim.team[1].stat.pts || gameSim.overtimes >= gameSim.maxOvertimes);
-
-    if (isGameOver) {
-      setGameState('complete');
-      const result = gameSim.finalizeGame();
-      setFinalResult(result);
-
-      if (onComplete) {
-        onComplete({
-          ...result,
-          teams: [
-            { ...result.teams[0], players: gameSim.team[0].player },
-            { ...result.teams[1], players: gameSim.team[1].player },
-          ],
-          playByPlay: gameSim.playByPlayLogger.getPlayByPlay(),
-          penalties: gameSim.getPenaltyStats(),
-          injuries: gameSim.injuries,
-        });
-      }
-      return;
-    }
-
-    // Schedule next step
-    if (gameState === 'playing') {
-      simulationRef.current = window.setTimeout(() => {
-        requestAnimationFrame(runSimulationStep);
-      }, delay);
-    }
-  }, [gameSim, gameState, speed, onComplete]);
-
-  // Start game
-  const startGame = useCallback(() => {
-    if (!gameSim) {
-      initializeGame();
-    }
+    setError(null);
     setGameState('playing');
-  }, [gameSim, initializeGame]);
 
-  // Pause game
+    post({
+      type: 'simulate',
+      gid,
+      teams: [homeSim, awaySim],
+      season: engine.getState().season,
+      playoffs: false,
+      speed,
+      quarterLength: 15,
+      numPeriods: 4,
+    });
+  }, [engine, homeTeam, awayTeam, homePlayers, awayPlayers, speed, post]);
+
   const pauseGame = useCallback(() => {
     setGameState('paused');
-    if (simulationRef.current) {
-      clearTimeout(simulationRef.current);
-      simulationRef.current = null;
-    }
-  }, []);
+    post({ type: 'pause', gid: gidRef.current });
+  }, [post]);
 
-  // Resume game
   const resumeGame = useCallback(() => {
     setGameState('playing');
-  }, []);
+    post({ type: 'resume', gid: gidRef.current });
+  }, [post]);
 
-  // Reset game
   const resetGame = useCallback(() => {
-    if (simulationRef.current) {
-      clearTimeout(simulationRef.current);
-      simulationRef.current = null;
-    }
-    initializeGame();
+    post({ type: 'abort', gid: gidRef.current });
     setGameState('pregame');
     setFinalResult(null);
-  }, [initializeGame]);
+    setPlayByPlay([]);
+    setScores([0, 0]);
+    setQuarter(1);
+    setClock(15);
+    setError(null);
+  }, [post]);
 
-  // Clean up on unmount
-  useEffect(() => {
-    return () => {
-      if (simulationRef.current) {
-        clearTimeout(simulationRef.current);
-      }
-    };
-  }, []);
-
-  // Run simulation when playing
-  useEffect(() => {
-    if (gameState === 'playing' && gameSim) {
-      runSimulationStep();
+  const changeSpeed = useCallback((next: SimSpeed) => {
+    setSpeed(next);
+    if (gameState === 'playing' || gameState === 'paused') {
+      post({ type: 'setSpeed', gid: gidRef.current, speed: next });
     }
-    return () => {
-      if (simulationRef.current) {
-        clearTimeout(simulationRef.current);
-      }
-    };
-  }, [gameState, gameSim, runSimulationStep]);
+  }, [gameState, post]);
 
   return (
     <div className="game-sim-view">
@@ -326,48 +209,33 @@ function GameSimView({ homeTeam, awayTeam, homePlayers, awayPlayers, onComplete,
         </Card.Body>
       </Card>
 
-      {/* Speed Control */}
-      {gameState === 'pregame' || gameState === 'paused' || gameState === 'playing' ? (
+      {error && (
+        <Alert variant="danger" className="mb-3" onClose={() => setError(null)} dismissible>
+          Simulation error: {error}
+        </Alert>
+      )}
+
+      {(gameState === 'pregame' || gameState === 'paused' || gameState === 'playing') && (
         <Card className="mb-3">
           <Card.Body className="d-flex justify-content-between align-items-center">
             <div>
               <strong>Simulation Speed:</strong>
             </div>
             <ButtonGroup>
-              <Button
-                variant={speed === 'instant' ? 'primary' : 'outline-primary'}
-                onClick={() => setSpeed('instant')}
-                disabled={gameState === 'playing'}
-              >
-                Instant
-              </Button>
-              <Button
-                variant={speed === 'fast' ? 'primary' : 'outline-primary'}
-                onClick={() => setSpeed('fast')}
-                disabled={gameState === 'playing'}
-              >
-                Fast
-              </Button>
-              <Button
-                variant={speed === 'normal' ? 'primary' : 'outline-primary'}
-                onClick={() => setSpeed('normal')}
-                disabled={gameState === 'playing'}
-              >
-                Normal
-              </Button>
-              <Button
-                variant={speed === 'slow' ? 'primary' : 'outline-primary'}
-                onClick={() => setSpeed('slow')}
-                disabled={gameState === 'playing'}
-              >
-                Slow
-              </Button>
+              {(['instant', 'fast', 'normal', 'slow'] as const).map(s => (
+                <Button
+                  key={s}
+                  variant={speed === s ? 'primary' : 'outline-primary'}
+                  onClick={() => changeSpeed(s)}
+                >
+                  {s.charAt(0).toUpperCase() + s.slice(1)}
+                </Button>
+              ))}
             </ButtonGroup>
           </Card.Body>
         </Card>
-      ) : null}
+      )}
 
-      {/* Scoreboard */}
       <Scoreboard
         teamNames={teamNames}
         teamColors={teamColors}
@@ -381,11 +249,10 @@ function GameSimView({ homeTeam, awayTeam, homePlayers, awayPlayers, onComplete,
         possession={possession}
       />
 
-      {/* Game Status */}
       {gameState === 'playing' && (
         <Alert variant="info" className="mb-3">
           <Spinner animation="border" size="sm" className="me-2" />
-          Simulating game at {speed} speed...
+          Simulating game at {speed} speed (off main thread)...
         </Alert>
       )}
 
@@ -397,7 +264,6 @@ function GameSimView({ homeTeam, awayTeam, homePlayers, awayPlayers, onComplete,
 
       <Row>
         <Col md={6}>
-          {/* Play by Play */}
           <PlayByPlayView
             events={playByPlay}
             teamNames={teamNames}
@@ -405,16 +271,19 @@ function GameSimView({ homeTeam, awayTeam, homePlayers, awayPlayers, onComplete,
           />
         </Col>
         <Col md={6}>
-          {/* Game Stats (show when complete or periodically) */}
           {gameState === 'complete' && finalResult ? (
             <GameStatsView
               teamNames={teamNames}
               teamColors={teamColors}
-              teams={[gameSim?.team[0].player || [], gameSim?.team[1].player || []]}
-              teamStats={[gameSim?.team[0].stat || {}, gameSim?.team[1].stat || {}]}
+              teams={[
+                finalResult.teams?.[0]?.players || [],
+                finalResult.teams?.[1]?.players || [],
+              ]}
+              teamStats={[
+                finalResult.teams?.[0] || {},
+                finalResult.teams?.[1] || {},
+              ]}
               scores={scores}
-              penalties={gameSim?.getPenaltyStats()}
-              injuries={gameSim?.injuries}
             />
           ) : (
             <Card>
