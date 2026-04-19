@@ -655,7 +655,7 @@ export class GameEngine {
 
   // === Origin Draft Methods ===
   getOriginDraftEligiblePlayers(): Player[] {
-    return getEligiblePlayersForOriginDraft(this.state.players, this.state.season);
+    return getEligiblePlayersForOriginDraft(this.state.players, this.state.teams, this.state.season);
   }
 
   executeOriginDraftPick(

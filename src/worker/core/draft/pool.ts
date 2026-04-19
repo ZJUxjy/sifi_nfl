@@ -1,4 +1,4 @@
-import type { Player } from '@common/entities';
+import type { Player, Team } from '@common/entities';
 import type { Region, DraftPick } from '@common/types';
 import { generate, generatePotential } from '../player/generate';
 import { calculateBaseSalary } from '../contract/negotiation';
@@ -126,24 +126,30 @@ export function selectPlayer(
 
 export function getEligiblePlayersForOriginDraft(
   players: Player[],
+  teams: Pick<Team, 'tid' | 'region'>[],
   season: number
 ): Player[] {
+  const tidToRegion = new Map<number, Region>();
+  for (const t of teams) tidToRegion.set(t.tid, t.region);
+
   return players.filter(player => {
     if (player.tid === undefined) return false;
-    if (player.region === 'originContinent') return false;
-    
-    const eligibility = ORIGIN_DRAFT_ELIGIBILITY[player.region];
+    const region = tidToRegion.get(player.tid);
+    if (!region) return false;
+    if (region === 'originContinent') return false;
+
+    const eligibility = ORIGIN_DRAFT_ELIGIBILITY[region as keyof typeof ORIGIN_DRAFT_ELIGIBILITY];
     if (!eligibility) return false;
-    
-    if (eligibility.minAge && player.age < eligibility.minAge) {
+
+    if ('minAge' in eligibility && eligibility.minAge && player.age < eligibility.minAge) {
       return false;
     }
-    
+
     const seasonsPlayed = season - player.draft.year;
     if (eligibility.minSeasons && seasonsPlayed < eligibility.minSeasons) {
       return false;
     }
-    
+
     return true;
   });
 }
