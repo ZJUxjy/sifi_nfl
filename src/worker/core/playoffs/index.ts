@@ -51,6 +51,12 @@ export type DoubleEliminationBracket = {
   championship?: PlayoffMatchup;
   champion?: number;
   currentRound: number;
+  /**
+   * Tids still alive in the losers bracket. Maintained by
+   * advanceDoubleEliminationRound so we can correctly merge new
+   * WB drops with prior LB survivors round-by-round.
+   */
+  lbAlive?: number[];
 };
 
 /**
@@ -147,62 +153,53 @@ export function generateSingleEliminationBracket(
 
 /**
  * Generate double elimination playoff bracket (Origin Continent style)
- * Top 8 teams from championship group
+ * Top 8 teams from championship group.
+ *
+ * Throws if fewer than 8 qualified teams are passed in. The previous
+ * implementation silently padded with `tid: -1` placeholders and
+ * generated only winners-bracket round 1, leaving the losers bracket
+ * permanently empty.
  */
+export const MIN_DOUBLE_ELIM_TEAMS = 8;
+
 export function generateDoubleEliminationBracket(
   teams: Team[],
   region: string,
   year: number
 ): DoubleEliminationBracket {
-  const qualifiedTeams = teams.slice(0, 8);
-
-  const winnersBracket: DoubleEliminationRound[] = [];
-  const losersBracket: DoubleEliminationRound[] = [];
-
-  // Winners Bracket Round 1: 1v8, 2v7, 3v6, 4v5
-  const wbRound1Matchups: PlayoffMatchup[] = [];
-  const seeds = [0, 7, 1, 6, 2, 5, 3, 4];
-
-  for (let i = 0; i < 8; i += 2) {
-    const team1 = qualifiedTeams[seeds[i]];
-    const team2 = qualifiedTeams[seeds[i + 1]];
-
-    if (team1 && team2) {
-      wbRound1Matchups.push({
-        round: 1,
-        matchupId: i / 2 + 1,
-        team1Tid: team1.tid,
-        team2Tid: team2.tid,
-        team1Seed: seeds[i] + 1,
-        team2Seed: seeds[i + 1] + 1,
-        played: false,
-      });
-    }
+  if (teams.length < MIN_DOUBLE_ELIM_TEAMS) {
+    throw new Error(
+      `double elimination requires at least ${MIN_DOUBLE_ELIM_TEAMS} teams (got ${teams.length})`
+    );
   }
+  const qualifiedTeams = teams.slice(0, MIN_DOUBLE_ELIM_TEAMS);
 
-  winnersBracket.push({
-    roundType: 'winners',
+  // Standard 1v8 / 4v5 / 2v7 / 3v6 seeding so the top half stays
+  // separated from the bottom half until later rounds.
+  const seedPairs: [number, number][] = [
+    [0, 7],
+    [3, 4],
+    [1, 6],
+    [2, 5],
+  ];
+  const wbRound1Matchups: PlayoffMatchup[] = seedPairs.map(([i, j], idx) => ({
     round: 1,
-    matchups: wbRound1Matchups,
-  });
-
-  // Add empty rounds for later
-  winnersBracket.push({ roundType: 'winners', round: 2, matchups: [] });
-  winnersBracket.push({ roundType: 'winners', round: 3, matchups: [] });
-
-  // Losers bracket starts empty (teams drop down as they lose)
-  losersBracket.push({ roundType: 'losers', round: 1, matchups: [] });
-  losersBracket.push({ roundType: 'losers', round: 2, matchups: [] });
-  losersBracket.push({ roundType: 'losers', round: 3, matchups: [] });
-  losersBracket.push({ roundType: 'losers', round: 4, matchups: [] });
+    matchupId: idx + 1,
+    team1Tid: qualifiedTeams[i].tid,
+    team2Tid: qualifiedTeams[j].tid,
+    team1Seed: i + 1,
+    team2Seed: j + 1,
+    played: false,
+  }));
 
   return {
     region,
     year,
     teams: qualifiedTeams,
-    winnersBracket,
-    losersBracket,
+    winnersBracket: [{ roundType: 'winners', round: 1, matchups: wbRound1Matchups }],
+    losersBracket: [],
     currentRound: 1,
+    lbAlive: [],
   };
 }
 
@@ -363,127 +360,189 @@ export function advanceSingleEliminationRound(
 }
 
 /**
- * Advance double elimination bracket
+ * Drive a double-elimination bracket forward by one full round.
+ *
+ * @param bracket   bracket produced by generateDoubleEliminationBracket;
+ *                  treated as immutable - the function returns a new
+ *                  bracket object.
+ * @param simulate  pure function that picks the winner from two team
+ *                  ids. Inject a real GameSim wrapper in production
+ *                  (see {@link simulateMatchupWithGameSim}); tests
+ *                  pass a deterministic stub.
+ *
+ * Behaviour:
+ *  - Plays every unplayed matchup in the current winners-bracket
+ *    round, then every unplayed losers-bracket round. Losers from
+ *    WB drop into the next LB round; LB losers are eliminated.
+ *  - When WB has narrowed to a single team and LB has narrowed to a
+ *    single team the next call schedules / plays the grand finals
+ *    (single game; no bracket-reset for now to keep the model simple).
+ *  - If `bracket.champion` is already set the call is a no-op.
  */
+export type DoubleElimSimulator = (team1Tid: number, team2Tid: number) => number;
+
 export function advanceDoubleEliminationRound(
+  bracket: DoubleEliminationBracket,
+  simulate: DoubleElimSimulator
+): DoubleEliminationBracket {
+  if (bracket.champion !== undefined) {
+    return bracket;
+  }
+
+  const next: DoubleEliminationBracket = {
+    ...bracket,
+    teams: bracket.teams,
+    winnersBracket: bracket.winnersBracket.map(r => ({
+      ...r,
+      matchups: r.matchups.map(m => ({ ...m })),
+    })),
+    losersBracket: bracket.losersBracket.map(r => ({
+      ...r,
+      matchups: r.matchups.map(m => ({ ...m })),
+    })),
+    lbAlive: bracket.lbAlive ? [...bracket.lbAlive] : [],
+  };
+
+  // 1. Play the current (latest, unplayed) WB round if any.
+  const lastWb = next.winnersBracket[next.winnersBracket.length - 1];
+  const wbLosersThisCall: number[] = [];
+  for (const m of lastWb.matchups) {
+    if (!m.played) {
+      m.winner = simulate(m.team1Tid, m.team2Tid);
+      m.loser = m.winner === m.team1Tid ? m.team2Tid : m.team1Tid;
+      m.played = true;
+    }
+    if (m.loser !== undefined) {
+      wbLosersThisCall.push(m.loser);
+    }
+  }
+  const wbWinnersThisCall = lastWb.matchups
+    .filter(m => m.winner !== undefined)
+    .map(m => m.winner as number);
+
+  // 2. Drop this round's WB losers into the LB.
+  // Round 1 is special: there are no prior LB survivors, so we just
+  // pair WB R1 losers among themselves. Subsequent calls perform a
+  // "merge" round (LB survivors + new WB drops) immediately followed
+  // by enough consolidation rounds to either narrow LB to 1 (if WB
+  // is exhausted) or stop with one survivor in waiting for the next
+  // WB drop.
+  if (wbLosersThisCall.length > 0) {
+    const lbAlive = next.lbAlive ?? [];
+    const merged = lbAlive.length === 0
+      ? wbLosersThisCall
+      : interleave(lbAlive, wbLosersThisCall);
+    next.lbAlive = playLbRound(next, merged, simulate);
+  }
+
+  // 3. If WB is exhausted but LB still has > 1 alive, drain LB with
+  // pure consolidate rounds until one survivor remains.
+  const wbExhausted = wbWinnersThisCall.length <= 1;
+  if (wbExhausted) {
+    while ((next.lbAlive?.length ?? 0) > 1) {
+      next.lbAlive = playLbRound(next, next.lbAlive!, simulate);
+    }
+  }
+
+  // 4. Build next WB round from this round's winners.
+  if (wbWinnersThisCall.length >= 2) {
+    next.winnersBracket.push({
+      roundType: 'winners',
+      round: lastWb.round + 1,
+      matchups: pairUp(wbWinnersThisCall, lastWb.round + 1),
+    });
+  }
+
+  // 5. Grand finals: a single WB survivor and a single LB survivor.
+  if (wbWinnersThisCall.length === 1 && (next.lbAlive?.length ?? 0) === 1) {
+    const finalsMatchup: PlayoffMatchup = {
+      round: 99,
+      matchupId: 1,
+      team1Tid: wbWinnersThisCall[0],
+      team2Tid: next.lbAlive![0],
+      played: true,
+    };
+    finalsMatchup.winner = simulate(finalsMatchup.team1Tid, finalsMatchup.team2Tid);
+    finalsMatchup.loser =
+      finalsMatchup.winner === finalsMatchup.team1Tid
+        ? finalsMatchup.team2Tid
+        : finalsMatchup.team1Tid;
+    next.championship = finalsMatchup;
+    next.champion = finalsMatchup.winner;
+  }
+
+  next.currentRound = bracket.currentRound + 1;
+  return next;
+}
+
+/**
+ * Play one losers-bracket round given the participants. Mutates
+ * `bracket.losersBracket` to record the matchups and returns the
+ * winners (which become the new lbAlive list).
+ */
+function playLbRound(
+  bracket: DoubleEliminationBracket,
+  participants: number[],
+  simulate: DoubleElimSimulator
+): number[] {
+  const roundNum = (bracket.losersBracket[bracket.losersBracket.length - 1]?.round ?? 0) + 1;
+  const matchups = pairUp(participants, roundNum);
+  const winners: number[] = [];
+  for (const m of matchups) {
+    m.winner = simulate(m.team1Tid, m.team2Tid);
+    m.loser = m.winner === m.team1Tid ? m.team2Tid : m.team1Tid;
+    m.played = true;
+    winners.push(m.winner);
+  }
+  // Carry forward any odd participant who didn't get paired (rare).
+  if (participants.length % 2 === 1) {
+    winners.push(participants[participants.length - 1]);
+  }
+  bracket.losersBracket.push({ roundType: 'losers', round: roundNum, matchups });
+  return winners;
+}
+
+function pairUp(teamIds: number[], roundNumber: number): PlayoffMatchup[] {
+  const matchups: PlayoffMatchup[] = [];
+  for (let i = 0; i + 1 < teamIds.length; i += 2) {
+    matchups.push({
+      round: roundNumber,
+      matchupId: i / 2 + 1,
+      team1Tid: teamIds[i],
+      team2Tid: teamIds[i + 1],
+      played: false,
+    });
+  }
+  return matchups;
+}
+
+function interleave(a: number[], b: number[]): number[] {
+  const out: number[] = [];
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i++) {
+    if (i < a.length) out.push(a[i]);
+    if (i < b.length) out.push(b[i]);
+  }
+  return out;
+}
+
+/**
+ * Adapter: drive the bracket using the project's GameSim. Keeps the
+ * older 3-arg signature working for callers that haven't migrated to
+ * the simulate-callback form yet.
+ */
+export function advanceDoubleEliminationRoundWithGameSim(
   bracket: DoubleEliminationBracket,
   allPlayers: any[],
   season: number
-): void {
-  // Get current winners bracket round
-  const wbRound = bracket.winnersBracket.find(r => r.round === bracket.currentRound);
-
-  if (wbRound && wbRound.matchups.length > 0) {
-    for (const matchup of wbRound.matchups) {
-      if (matchup.played) continue;
-
-      const team1 = bracket.teams.find(t => t.tid === matchup.team1Tid);
-      const team2 = bracket.teams.find(t => t.tid === matchup.team2Tid);
-
-      if (!team1 || !team2) continue;
-
-      const result = simulatePlayoffGame(team1, team2, allPlayers, season);
-
-      matchup.winner = result.winner;
-      matchup.loser = result.loser;
-      matchup.score = result.score;
-      matchup.played = true;
-
-      // Winner advances in winners bracket
-      // Loser drops to losers bracket
-      advanceLoserToLosersBracket(bracket, result.loser, bracket.currentRound);
-    }
-  }
-
-  // Process losers bracket games
-  const lbRound = bracket.losersBracket.find(r => r.round === bracket.currentRound);
-
-  if (lbRound && lbRound.matchups.length > 0) {
-    for (const matchup of lbRound.matchups) {
-      if (matchup.played) continue;
-
-      const team1 = bracket.teams.find(t => t.tid === matchup.team1Tid);
-      const team2 = bracket.teams.find(t => t.tid === matchup.team2Tid);
-
-      if (!team1 || !team2) continue;
-
-      const result = simulatePlayoffGame(team1, team2, allPlayers, season);
-
-      matchup.winner = result.winner;
-      matchup.loser = result.loser;
-      matchup.score = result.score;
-      matchup.played = true;
-
-      // Loser is eliminated
-    }
-  }
-
-  // Check if current round is complete and advance
-  const wbComplete = !wbRound || wbRound.matchups.every(m => m.played);
-  const lbComplete = !lbRound || lbRound.matchups.every(m => m.played || m.team1Tid === -1 || m.team2Tid === -1);
-
-  if (wbComplete && lbComplete) {
-    setupNextRoundMatchups(bracket);
-    bracket.currentRound++;
-  }
-}
-
-/**
- * Add loser to losers bracket
- */
-function advanceLoserToLosersBracket(
-  bracket: DoubleEliminationBracket,
-  loserTid: number,
-  fromRound: number
-): void {
-  // Losers from WB round 1 go to LB round 1 or 2
-  const lbRound = bracket.losersBracket.find(r => r.round === Math.ceil(fromRound / 2) + 1);
-
-  if (lbRound) {
-    const emptyMatchup = lbRound.matchups.find(m => m.team1Tid === -1);
-
-    if (emptyMatchup) {
-      emptyMatchup.team1Tid = loserTid;
-    } else {
-      const newMatchup: PlayoffMatchup = {
-        round: lbRound.round,
-        matchupId: lbRound.matchups.length + 1,
-        team1Tid: loserTid,
-        team2Tid: -1,
-        played: false,
-      };
-      lbRound.matchups.push(newMatchup);
-    }
-  }
-}
-
-/**
- * Setup matchups for the next round
- */
-function setupNextRoundMatchups(bracket: DoubleEliminationBracket): void {
-  const nextRound = bracket.currentRound + 1;
-
-  // Setup winners bracket next round
-  const currentWb = bracket.winnersBracket.find(r => r.round === bracket.currentRound);
-  const nextWb = bracket.winnersBracket.find(r => r.round === nextRound);
-
-  if (currentWb && nextWb) {
-    const winners = currentWb.matchups
-      .filter(m => m.played && m.winner !== undefined)
-      .map(m => m.winner as number);
-
-    for (let i = 0; i < winners.length; i += 2) {
-      if (winners[i] && winners[i + 1]) {
-        nextWb.matchups.push({
-          round: nextRound,
-          matchupId: nextWb.matchups.length + 1,
-          team1Tid: winners[i],
-          team2Tid: winners[i + 1],
-          played: false,
-        });
-      }
-    }
-  }
+): DoubleEliminationBracket {
+  return advanceDoubleEliminationRound(bracket, (t1, t2) => {
+    const team1 = bracket.teams.find(t => t.tid === t1);
+    const team2 = bracket.teams.find(t => t.tid === t2);
+    if (!team1 || !team2) return t1;
+    const result = simulatePlayoffGame(team1, team2, allPlayers, season);
+    return result.winner;
+  });
 }
 
 /**
