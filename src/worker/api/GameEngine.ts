@@ -53,7 +53,7 @@ import {
   type PlayoffBracket,
   type DoubleEliminationBracket,
 } from '../core/playoffs';
-import { getStatsManager as doGetStatsManager, type StatsManager } from '../core/stats/StatsManager';
+import { StatsManager } from '../core/stats/StatsManager';
 import { GameSim as GameSimImpl } from '../core/game/GameSim';
 import { calculateCompositeRatings } from '../core/player/ovr';
 import type { PlayerSeasonStats } from '@common/stats';
@@ -84,6 +84,13 @@ const GAME_VERSION = '0.2.0';
 export class GameEngine {
   private state: GameState;
   private seasonManager: SeasonManager | null = null;
+  /**
+   * Per-engine stats accumulator. Lazily constructed on first access so
+   * fresh engines (tests, multiple parallel games on the server, etc.)
+   * never share state through a module-level singleton — that was the
+   * source of the cross-game `pssYds` doubling bug fixed in P2/D1.
+   */
+  private statsManager: StatsManager | null = null;
 
   constructor() {
     this.state = this.getInitialState();
@@ -1194,7 +1201,12 @@ export class GameEngine {
   }
 
   advanceSingleEliminationRound(bracket: PlayoffBracket): void {
-    doAdvanceSingleEliminationRound(bracket, this.state.players, this.state.season);
+    doAdvanceSingleEliminationRound(
+      bracket,
+      this.state.players,
+      this.state.season,
+      this.getStatsManager(),
+    );
   }
 
   isPlayoffComplete(bracket: PlayoffBracket | DoubleEliminationBracket): boolean {
@@ -1202,8 +1214,20 @@ export class GameEngine {
   }
 
   // -- Stats --
+  /**
+   * Engine-owned StatsManager. The optional `season` argument lets callers
+   * request a manager for a different year (e.g. historical lookup). When
+   * the requested season differs from the cached one, the existing
+   * instance is reset rather than replaced — this preserves any external
+   * references that callers may already hold.
+   */
   getStatsManager(season: number = this.state.season): StatsManager {
-    return doGetStatsManager(season);
+    if (!this.statsManager) {
+      this.statsManager = new StatsManager(season);
+    } else if (season !== undefined && this.statsManager['season'] !== season) {
+      this.statsManager.resetForSeason(season);
+    }
+    return this.statsManager;
   }
 
   getAllPlayerStats(season: number = this.state.season): PlayerSeasonStats[] {

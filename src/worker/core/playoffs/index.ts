@@ -12,7 +12,7 @@ import type { Team } from '@common/entities';
 import { GameSim } from '../game/GameSim';
 import { calculateCompositeRatings } from '../player/ovr';
 import type { TeamGameSim, PlayerGameSim } from '../game/types';
-import { getStatsManager } from '../stats/StatsManager';
+import { StatsManager } from '../stats/StatsManager';
 
 export type PlayoffMatchup = {
   round: number;
@@ -273,12 +273,17 @@ export function simulatePlayoffGame(
   team1: Team,
   team2: Team,
   allPlayers: any[],
-  season: number
+  season: number,
+  statsManager?: StatsManager,
 ): { winner: number; loser: number; score: { team1: number; team2: number } } {
   const team1Sim = convertTeamForSimulation(team1, allPlayers);
   const team2Sim = convertTeamForSimulation(team2, allPlayers);
 
-  const statsManager = getStatsManager(season);
+  // Caller (GameEngine) owns the per-season accumulator; if none was
+  // supplied we fall back to a fresh, throw-away one so this function
+  // stays callable in isolation (tests, scripts) without resurrecting
+  // the old module-level singleton.
+  const sm = statsManager ?? new StatsManager(season);
 
   const game = new GameSim({
     gid: Date.now(),
@@ -286,7 +291,7 @@ export function simulatePlayoffGame(
     teams: [team1Sim, team2Sim],
     quarterLength: 15,
     numPeriods: 4,
-    statsManager,
+    statsManager: sm,
     playoffs: true,
     season,
   });
@@ -311,7 +316,8 @@ export function simulatePlayoffGame(
 export function advanceSingleEliminationRound(
   bracket: PlayoffBracket,
   allPlayers: any[],
-  season: number
+  season: number,
+  statsManager?: StatsManager,
 ): void {
   const currentRoundMatchups = bracket.matchups.filter(m => m.round === bracket.currentRound);
 
@@ -323,7 +329,7 @@ export function advanceSingleEliminationRound(
 
     if (!team1 || !team2) continue;
 
-    const result = simulatePlayoffGame(team1, team2, allPlayers, season);
+    const result = simulatePlayoffGame(team1, team2, allPlayers, season, statsManager);
 
     matchup.winner = result.winner;
     matchup.loser = result.loser;
@@ -534,13 +540,14 @@ function interleave(a: number[], b: number[]): number[] {
 export function advanceDoubleEliminationRoundWithGameSim(
   bracket: DoubleEliminationBracket,
   allPlayers: any[],
-  season: number
+  season: number,
+  statsManager?: StatsManager,
 ): DoubleEliminationBracket {
   return advanceDoubleEliminationRound(bracket, (t1, t2) => {
     const team1 = bracket.teams.find(t => t.tid === t1);
     const team2 = bracket.teams.find(t => t.tid === t2);
     if (!team1 || !team2) return t1;
-    const result = simulatePlayoffGame(team1, team2, allPlayers, season);
+    const result = simulatePlayoffGame(team1, team2, allPlayers, season, statsManager);
     return result.winner;
   });
 }

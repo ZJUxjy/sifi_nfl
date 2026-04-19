@@ -9,7 +9,7 @@
  */
 import { GameSim } from '@worker/core/game/GameSim';
 import { setSeed } from '@common/random';
-import { getStatsManager } from '@worker/core/stats/StatsManager';
+import { StatsManager } from '@worker/core/stats/StatsManager';
 import type {
   SimRequest,
   SimResponse,
@@ -130,7 +130,10 @@ function startSimulation(req: SimulateRequest) {
     setSeed(req.seed);
   }
 
-  const statsManager = getStatsManager(req.season);
+  // One StatsManager per simulation request — the worker may run many
+  // games over its lifetime and the previous module-level cache leaked
+  // accumulated stats across them.
+  const statsManager = new StatsManager(req.season);
 
   const sim = new GameSim({
     gid: req.gid,

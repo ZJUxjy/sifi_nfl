@@ -268,19 +268,15 @@ export class StatsManager {
   getAllPlayerStats(): PlayerSeasonStats[] {
     return Array.from(this.playerSeasonStats.values());
   }
-}
 
-// Singleton instance for current season
-let currentStatsManager: StatsManager | null = null;
-
-export function getStatsManager(season?: number): StatsManager {
-  if (!currentStatsManager || (season && currentStatsManager['season'] !== season)) {
-    currentStatsManager = new StatsManager(season ?? new Date().getFullYear());
+  /**
+   * Reset all accumulated stats and switch to a new season. Used when the
+   * owning engine advances seasons so the same instance can be reused
+   * without leaking the prior season's totals.
+   */
+  resetForSeason(season: number): void {
+    this.season = season;
+    this.playerSeasonStats.clear();
+    this.teamSeasonStats.clear();
   }
-  return currentStatsManager;
-}
-
-export function resetStatsManager(season: number): StatsManager {
-  currentStatsManager = new StatsManager(season);
-  return currentStatsManager;
 }
