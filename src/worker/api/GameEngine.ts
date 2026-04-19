@@ -745,7 +745,7 @@ export class GameEngine {
     const payroll = teamPlayers.reduce((sum, p) => sum + (p.contract?.amount || 0), 0);
 
     // Calculate revenue based on team market and performance
-    const marketMultiplier = team.market === 'Huge' ? 1.5 : team.market === 'Large' ? 1.2 : team.market === 'Medium' ? 1.0 : 0.8;
+    const marketMultiplier = team.market === 'huge' ? 1.5 : team.market === 'large' ? 1.2 : team.market === 'medium' ? 1.0 : 0.8;
     const baseRevenue = 50000000 * marketMultiplier; // $50M base
 
     const revenue = {
