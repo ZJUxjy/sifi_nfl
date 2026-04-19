@@ -85,6 +85,27 @@ export type ScoringEventInput =
       t: TeamNum;
       td: boolean;
       yds: number;
+    }
+  // Dedicated celebration events for defensive return touchdowns. We
+  // emit these IN ADDITION to the underlying interception/fumble event
+  // (which carries td=true) so consumers that care specifically about
+  // pick-six / fumble-six (e.g. season-leader boards) don't have to
+  // pattern-match on `type === 'interception' && td`.
+  | {
+      type: 'pickSix';
+      clock: number;
+      names: string[];
+      pid: number;
+      t: TeamNum;
+      yds: number;
+    }
+  | {
+      type: 'fumbleSix';
+      clock: number;
+      names: string[];
+      pid: number;
+      t: TeamNum;
+      yds: number;
     };
 
 export type PlayByPlayEventInput =
@@ -245,6 +266,8 @@ class PlayByPlayLogger {
       'sack',
       'interception',
       'fumble',
+      'pickSix',
+      'fumbleSix',
     ];
     return scoringTypes.includes(event.type);
   }
@@ -331,6 +354,12 @@ class PlayByPlayLogger {
       case 'fumble':
         parts.push(`Fumble by ${event.names[0]}, recovered by ${event.names[1]}`);
         if (event.td) parts.push('- TOUCHDOWN!');
+        break;
+      case 'pickSix':
+        parts.push(`PICK SIX! ${event.names[0]} returns interception ${event.yds} yards for a TD`);
+        break;
+      case 'fumbleSix':
+        parts.push(`FUMBLE SIX! ${event.names[0]} returns fumble ${event.yds} yards for a TD`);
         break;
       case 'kneel':
         parts.push(`${event.names[0]} kneels for -${Math.abs(event.yds)} yards`);

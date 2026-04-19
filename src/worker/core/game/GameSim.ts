@@ -331,7 +331,65 @@ export class GameSim {
         this.processPenalty(defensivePenalty, defensivePenalty.spotYards, false);
         return;
       }
-      
+
+      // Interception: rolled inside the "not a completion" branch so the
+      // odds compose with completionProb the way real INTs do (a tighter
+      // coverage gap raises both incompletion *and* INT chances). Picked
+      // here rather than at the top of doPass to keep the existing
+      // sack/penalty random-call ordering intact for tests that pin
+      // Math.random() to a single value.
+      const intProb = bound(0.05 + (coverage - qbAccuracy) * 0.005, 0.01, 0.10);
+      if (Math.random() < intProb) {
+        const interceptor =
+          (defenders.length > 0 ? choice(defenders) : undefined) ??
+          this.team[this.d].player[0];
+        const returnYds = Math.round(truncGauss(8, 6, 0, 100));
+
+        this.recordStat(this.o, qb, 'pss');
+        this.recordStat(this.o, qb, 'pssInt');
+        this.recordStat(this.o, target, 'tgt');
+        this.recordStat(this.d, interceptor, 'defInt');
+        this.recordStat(this.d, interceptor, 'defIntYds', returnYds);
+
+        // Pick-six probability: 10% baseline, lightly modulated by the
+        // returner's straight-line speed. Capped narrow (3-20%) so a
+        // single elite defender can't dominate the season-leader board.
+        const spdAdj = ((interceptor.spd ?? 50) - 50) * 0.005;
+        const pickSixProb = bound(0.10 + spdAdj, 0.03, 0.20);
+        const isPickSix = Math.random() < pickSixProb;
+
+        this.playByPlayLogger.logEvent({
+          type: 'interception',
+          clock: this.clock,
+          names: [qb.name, interceptor.name],
+          t: this.d,
+          td: isPickSix,
+          yds: returnYds,
+        });
+        this.playByPlayLogger.logClock({
+          down: this.down,
+          toGo: this.toGo,
+          scrimmage: this.scrimmage,
+          t: this.o,
+        });
+
+        if (isPickSix) {
+          this.recordStat(this.d, interceptor, 'defIntTD');
+          this.playByPlayLogger.logEvent({
+            type: 'pickSix',
+            clock: this.clock,
+            names: [interceptor.name],
+            pid: interceptor.pid,
+            t: this.d,
+            yds: returnYds,
+          });
+          this.scoreDefensiveTouchdown(interceptor);
+        } else {
+          this.possessionChange();
+        }
+        return;
+      }
+
       this.playByPlayLogger.logEvent({
         type: 'passIncomplete',
         clock: this.clock,
@@ -420,7 +478,71 @@ export class GameSim {
     const baseYds = truncGauss(4 + (runBlockComposite - runStopComposite) * 0.08, 4, -5, 25);
     const rbBonus = (rb.compositeRating.rushing - 50) * 0.1;
     const yds = Math.round(baseYds + rbBonus);
-    
+
+    // Fumble check happens BEFORE updateState so the random calls used
+    // by `updateState`'s clock-stochastics don't shift the sequence the
+    // tests pin (and so we never advance the down on a play that ends in
+    // a turnover anyway). `ballSecurity` lightly trims the rate for
+    // sure-handed RBs; bound keeps the rate in a realistic 0.5-4% band.
+    const ballSec = rb.compositeRating.ballSecurity ?? 50;
+    const fumbleProb = bound(0.015 - (ballSec - 50) * 0.0005, 0.005, 0.04);
+    if (Math.random() < fumbleProb) {
+      // Credit the rusher with the yards he picked up before coughing it
+      // up — matches NFL bookkeeping (rushing yards count even on a
+      // fumble that's recovered by the defense).
+      this.scrimmage += yds;
+      this.recordStat(this.o, rb, 'rus');
+      this.recordStat(this.o, rb, 'rusYds', yds);
+      this.recordStat(this.o, rb, 'rusFmb');
+
+      const recoverers = this.getPlayers(this.d, ['DL', 'LB', 'CB', 'S']);
+      const recoverer =
+        (recoverers.length > 0 ? choice(recoverers) : undefined) ??
+        this.team[this.d].player[0];
+      const returnYds = Math.round(truncGauss(5, 5, 0, 80));
+
+      this.recordStat(this.d, recoverer, 'defFf');
+      this.recordStat(this.d, recoverer, 'defFr');
+
+      // Fumble-six baseline 8% (lower than pickSix because most fumbles
+      // are recovered in a pile, not in space). Same speed-tilt as
+      // pick-six but capped tighter.
+      const spdAdj = ((recoverer.spd ?? 50) - 50) * 0.005;
+      const fumbleSixProb = bound(0.08 + spdAdj, 0.02, 0.18);
+      const isFumbleSix = Math.random() < fumbleSixProb;
+
+      this.playByPlayLogger.logEvent({
+        type: 'fumble',
+        clock: this.clock,
+        names: [rb.name, recoverer.name],
+        t: this.d,
+        td: isFumbleSix,
+        yds: returnYds,
+      });
+      this.playByPlayLogger.logClock({
+        down: this.down,
+        toGo: this.toGo,
+        scrimmage: this.scrimmage,
+        t: this.o,
+      });
+
+      if (isFumbleSix) {
+        this.recordStat(this.d, recoverer, 'defFrTD');
+        this.playByPlayLogger.logEvent({
+          type: 'fumbleSix',
+          clock: this.clock,
+          names: [recoverer.name],
+          pid: recoverer.pid,
+          t: this.d,
+          yds: returnYds,
+        });
+        this.scoreDefensiveTouchdown(recoverer);
+      } else {
+        this.possessionChange();
+      }
+      return;
+    }
+
     this.updateState(yds);
     const td = this.scrimmage >= 100;
     const safety = this.scrimmage <= 0;
@@ -739,6 +861,28 @@ export class GameSim {
     if (this.overtimeState !== undefined) {
       this.overtimeState = 'over';
     }
+  }
+
+  /**
+   * Score a touchdown for the *defending* team — called from the pick-six /
+   * fumble-six branches of doPass / doRun. The contract is: caller has
+   * already recorded the turnover stats on the (still-current) defender,
+   * and we are responsible for flipping possession so the returning team
+   * becomes the new offense for the upcoming XP/2PT attempt.
+   *
+   * Why flip BEFORE calling scoreTouchdown:
+   *   - `scoreTouchdown()` adds 6 to `this.team[this.o]`, so the
+   *     defending-team-becomes-offense flip must happen first or we'd
+   *     credit the points to the team that just turned the ball over.
+   *   - `awaitingAfterTouchdown = true` then routes the next play
+   *     through `doExtraPoint`, which kicks for `this.o`. After the
+   *     flip, `this.o` is the returning team — exactly the unit that
+   *     should be lining up for the XP. This mirrors the standard
+   *     post-TD state machine fixed in B2/C2.
+   */
+  scoreDefensiveTouchdown(_returner: PlayerGameSim): void {
+    [this.o, this.d] = [this.d, this.o];
+    this.scoreTouchdown();
   }
 
   scoreSafety(): void {
