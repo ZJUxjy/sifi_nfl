@@ -55,12 +55,20 @@ export async function saveWorldData(data: WorldData): Promise<void> {
   });
 }
 
-export async function loadWorldData(): Promise<WorldData | null> {
+/**
+ * Read cached world data for a specific season.
+ *
+ * The 'world' object store is keyed by `season` (see `keyPath: 'season'`
+ * in `initDB`). Callers must pass the in-game season they care about —
+ * historically this was hardcoded to 2025, which silently broke any
+ * cross-year reads (P2 D2).
+ */
+export async function loadWorldData(season: number): Promise<WorldData | null> {
   const db = await initDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction([STORE_WORLD], 'readonly');
     const store = transaction.objectStore(STORE_WORLD);
-    const request = store.get(2025); // Default season
+    const request = store.get(season);
 
     request.onsuccess = () => resolve(request.result || null);
     request.onerror = () => reject(request.error);

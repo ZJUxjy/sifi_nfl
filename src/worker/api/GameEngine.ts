@@ -127,6 +127,11 @@ export class GameEngine {
     console.log('GameEngine.newGame called with options:', options);
     this.state.loading = true;
 
+    // Resolve the target season up-front so every storage / generator call
+    // below uses a single consistent value instead of falling back to a
+    // hardcoded literal at the call site (P2 D2).
+    const targetSeason = options.season || this.state.season;
+
     // Initialize IndexedDB
     if (typeof window !== 'undefined') {
       try {
@@ -140,7 +145,7 @@ export class GameEngine {
     // Check for cached data in IndexedDB
     if (typeof window !== 'undefined') {
       try {
-        const cachedData = await loadWorldData();
+        const cachedData = await loadWorldData(targetSeason);
         console.log('Cached data loaded:', cachedData ? `${cachedData.teams?.length} teams, ${cachedData.players?.length} players` : 'null');
 
         if (cachedData && cachedData.teams && cachedData.teams.length > 0 && cachedData.players && cachedData.players.length > 0) {
@@ -191,7 +196,7 @@ export class GameEngine {
       const { generateAllTeams } = await import('../core/team/index');
       const { generateFreeAgentPool } = await import('../core/freeAgent/market');
 
-      const season = options.season || 2025;
+      const season = targetSeason;
       console.log('Generating teams for season', season);
       const { teams, players } = generateAllTeams(season);
       console.log('Generated teams:', teams.length, 'players:', players.length);
