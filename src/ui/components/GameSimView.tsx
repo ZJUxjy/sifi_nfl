@@ -10,6 +10,7 @@ import Scoreboard from './Scoreboard';
 import PlayByPlayView from './PlayByPlayView';
 import GameStatsView from './GameStatsView';
 import SimWorker from '../workers/simWorker?worker';
+import { handleWorkerMessage } from '../workers/simWorkerClient';
 import type {
   SimRequest,
   SimResponse,
@@ -57,7 +58,13 @@ function GameSimView({ homeTeam, awayTeam, homePlayers, awayPlayers, onComplete,
     workerRef.current = w;
 
     w.onmessage = (e: MessageEvent<SimResponse>) => {
-      const msg = e.data;
+      // Drop stale messages from a prior run (Play Again / Reset /
+      // Pause+Resume races). Reads `gidRef.current` live — never close
+      // over `gid` from React state — so the filter sees the latest
+      // run id even after this handler was bound on an earlier render.
+      // Review Fixlist §11.
+      const msg = handleWorkerMessage(gidRef.current, e.data);
+      if (!msg) return;
       switch (msg.type) {
         case 'event': {
           setPlayByPlay(prev => [...prev, msg.event]);
