@@ -62,6 +62,20 @@ export class GameSim {
   playoffs: boolean = false;
   season: number = 2025;
 
+  /**
+   * Streaming sink — set by callers (e.g. the Web Worker bridge) to receive
+   * every play-by-play event as it is generated. Setting this also wires
+   * the underlying logger so events flow without a buffering step.
+   */
+  private _onEvent?: (event: import('./PlayByPlayLogger').PlayByPlayEvent) => void;
+  get onEvent() {
+    return this._onEvent;
+  }
+  set onEvent(cb: ((event: import('./PlayByPlayLogger').PlayByPlayEvent) => void) | undefined) {
+    this._onEvent = cb;
+    this.playByPlayLogger.onEvent = cb;
+  }
+
   constructor({
     gid,
     day,

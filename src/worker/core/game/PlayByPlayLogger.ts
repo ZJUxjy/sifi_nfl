@@ -168,6 +168,15 @@ class PlayByPlayLogger {
   quarter = 1;
   overtimeNum = 0;
 
+  /**
+   * Optional sink for streaming events (e.g. a Web Worker bridge).
+   * Receives the same object reference that was just pushed onto
+   * `playByPlay`, so consumers can rely on identity / order.
+   * Errors thrown by the callback are swallowed so a buggy sink can
+   * never break the simulation.
+   */
+  onEvent?: (event: PlayByPlayEvent) => void;
+
   constructor(active: boolean = true) {
     this.active = active;
   }
@@ -182,13 +191,22 @@ class PlayByPlayLogger {
       this.overtimeNum = event.overtimeNum;
     }
 
-    this.playByPlay.push({ ...event });
+    const stored: PlayByPlayEvent = { ...event };
+    this.playByPlay.push(stored);
 
     if (this.isScoringEvent(event)) {
       this.scoringSummary.push({
         ...event,
         quarter: this.quarter,
       });
+    }
+
+    if (this.onEvent) {
+      try {
+        this.onEvent(stored);
+      } catch {
+        // Defensive: don't let a sink crash the sim loop.
+      }
     }
   }
 
