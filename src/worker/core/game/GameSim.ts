@@ -252,7 +252,13 @@ export class GameSim {
 
   doPass(): void {
     const qb = this.getPlayer(this.o, 'QB');
-    const passRushers = this.getPlayers(this.d, ['DL', 'LB']).slice(0, 4);
+    let passRushers = this.getPlayers(this.d, ['DL', 'LB']).slice(0, 4);
+    // If the defense has no traditional pass rushers (e.g. a malformed roster
+    // or an injury-decimated unit), fall back to whatever defenders we have so
+    // `passRushComposite` doesn't divide by zero and poison sackProb with NaN.
+    if (passRushers.length === 0) {
+      passRushers = this.team[this.d].player.slice(0, 4);
+    }
     const defenders = this.getPlayers(this.d, ['CB', 'S', 'LB']);
     
     const passBlockers = this.getPlayers(this.o, ['OL', 'TE', 'RB']).slice(0, 6);
