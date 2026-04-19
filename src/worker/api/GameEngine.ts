@@ -1295,8 +1295,17 @@ export class GameEngine {
     return this.statsManager;
   }
 
-  getAllPlayerStats(season: number = this.state.season): PlayerSeasonStats[] {
-    return this.getStatsManager(season).getAllPlayerStats();
+  /**
+   * League-wide player stats for the requested season + bucket. Defaults
+   * to the regular-season bucket so legacy callers (e.g. the leaderboard
+   * view) keep their pre-FL6 behaviour without having to be touched.
+   * Pass `playoffs = true` for the postseason bucket.
+   */
+  getAllPlayerStats(
+    season: number = this.state.season,
+    playoffs: boolean = false,
+  ): PlayerSeasonStats[] {
+    return this.getStatsManager(season).getAllPlayerStats(playoffs);
   }
 
   // -- Game simulation factory (Task 22 wrapper; Task 23 will move it ---

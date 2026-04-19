@@ -1528,14 +1528,22 @@ export class GameSim {
         const hasStats = Object.keys(player.stat).length > 0;
         if (!hasStats) continue;
 
-        // Initialize and record stats
+        // Initialize and record stats — `playoffs` must be threaded
+        // through both calls. `recordPlayerGameStats` keys on
+        // `(pid, playoffs)` (FL6), so dropping the flag here would
+        // record the playoff game into the regular-season bucket
+        // (or vice versa) and pollute the corresponding row.
         this.statsManager.initPlayerStats(
           { pid: player.pid, tid } as any,
           this.playoffs
         );
 
         const gameStats = this.convertPlayerStats(player, tid);
-        this.statsManager.recordPlayerGameStats(player.pid, gameStats);
+        this.statsManager.recordPlayerGameStats(
+          player.pid,
+          gameStats,
+          this.playoffs,
+        );
       }
     }
   }

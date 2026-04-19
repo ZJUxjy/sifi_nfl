@@ -94,9 +94,12 @@ function StatsView() {
 
   const engine = getGameEngine();
 
-  // Get all player stats
+  // Get all player stats. `getAllPlayerStats` defaults to the
+  // regular-season bucket (FL6) — the historical `.filter(!playoffs)`
+  // is no longer needed because the bucket split happens upstream.
+  // A future playoff toggle would just flip the second arg to `true`.
   const allStats = useMemo(() => {
-    return engine.getAllPlayerStats(season).filter(s => !s.playoffs);
+    return engine.getAllPlayerStats(season, false);
   }, [engine, season]);
 
   // Filter and sort stats based on category
