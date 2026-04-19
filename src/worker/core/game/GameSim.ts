@@ -176,18 +176,18 @@ export class GameSim {
   }
 
   simPlay(): void {
-    if (this.awaitingKickoff !== undefined) {
-      this.doKickoff();
+    if (this.awaitingAfterSafety) {
+      this.doKickoffFromSafety();
       return;
     }
-    
+
     if (this.awaitingAfterTouchdown) {
       this.doExtraPoint();
       return;
     }
-    
-    if (this.awaitingAfterSafety) {
-      this.doKickoffFromSafety();
+
+    if (this.awaitingKickoff !== undefined) {
+      this.doKickoff();
       return;
     }
     
@@ -712,8 +712,14 @@ export class GameSim {
   }
 
   getPlayer(team: TeamNum, pos: string): PlayerGameSim {
-    const players = this.team[team].player.filter(p => p.pos === pos);
-    return players[0] || this.team[team].player[0];
+    const t = this.team[team];
+    if (!t) {
+      throw new Error(
+        `getPlayer called with invalid team ${team} (o=${this.o}, d=${this.d}, awaitingKickoff=${this.awaitingKickoff}, awaitingAfterSafety=${this.awaitingAfterSafety})`,
+      );
+    }
+    const players = t.player.filter(p => p.pos === pos);
+    return players[0] || t.player[0];
   }
 
   getPlayers(team: TeamNum, positions: string[]): PlayerGameSim[] {
