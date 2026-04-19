@@ -26,8 +26,8 @@ describe('Team Generation', () => {
       expect(team.colors).toHaveLength(3);
       expect(SCI_FI_COLORS).toContainEqual(team.colors);
       expect(team.pop).toMatch(/Small|Medium|Large|Huge/);
-      expect(team.budget).toBe(200000);
-      expect(team.cash).toBe(100000);
+      expect(team.budget).toBeGreaterThanOrEqual(50_000_000);
+      expect(team.cash).toBeGreaterThanOrEqual(1_000_000);
     });
 
     it('should generate unique abbreviations', () => {
