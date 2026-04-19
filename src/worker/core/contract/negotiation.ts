@@ -109,7 +109,6 @@ export function finalizeContract(
     incentives: 0,
     signingBonus: offer.signingBonus,
     guaranteed: offer.guaranteed,
-    options: [],
     noTrade: offer.noTrade || false,
   };
   

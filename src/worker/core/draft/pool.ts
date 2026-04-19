@@ -118,7 +118,6 @@ export function selectPlayer(
     incentives: 0,
     signingBonus: Math.round(rookieSalary * 0.5),
     guaranteed: Math.round(rookieSalary * rookieContractYears * 0.8),
-    options: [],
     noTrade: false,
   };
   
@@ -174,7 +173,6 @@ export function runOriginDraft(
       incentives: 0,
       signingBonus: Math.round(winningBid.bid * 0.3),
       guaranteed: Math.round(winningBid.bid * 2),
-      options: [],
       noTrade: false,
     };
     

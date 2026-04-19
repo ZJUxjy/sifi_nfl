@@ -143,7 +143,6 @@ export function signFreeAgent(
     incentives: 0,
     signingBonus: Math.round(salary * 0.2),
     guaranteed: Math.round(salary * years * 0.5),
-    options: [],
     noTrade: false,
   };
 }

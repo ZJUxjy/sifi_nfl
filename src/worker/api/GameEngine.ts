@@ -699,7 +699,6 @@ export class GameEngine {
       incentives: 0,
       signingBonus: Math.round(bidAmount * 0.3),
       guaranteed: Math.round(newSalary * 2),
-      options: [],
       noTrade: false,
     };
 
