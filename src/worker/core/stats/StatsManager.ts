@@ -237,19 +237,44 @@ export class StatsManager {
   }
 
   /**
-   * Export stats for saving
+   * Export a JSON-safe snapshot of all accumulators (FL5).
+   *
+   * The shape is symmetric with `import()` so that
+   * `mgr.import(mgr.export())` is a no-op, and so a snapshot can survive
+   * `JSON.parse(JSON.stringify(...))` (or IndexedDB structured-clone)
+   * without losing data — `Map` does not survive `JSON.stringify`, so
+   * `teamStats` is serialized as `Array<[tid, games[]]>` instead.
+   *
+   * `season` is included in the snapshot so a loader can sanity-check
+   * (or directly install) the year the stats belong to without having
+   * to keep that metadata in a sibling field.
    */
-  export(): { playerStats: PlayerSeasonStats[]; teamStats: Map<number, TeamGameStats[]> } {
+  export(): {
+    season: number;
+    playerStats: PlayerSeasonStats[];
+    teamStats: Array<[number, TeamGameStats[]]>;
+  } {
     return {
+      season: this.season,
       playerStats: Array.from(this.playerSeasonStats.values()),
-      teamStats: this.teamSeasonStats,
+      teamStats: Array.from(this.teamSeasonStats.entries()),
     };
   }
 
   /**
-   * Import stats from save
+   * Restore accumulators from an `export()` snapshot. Always clears
+   * existing in-memory state first so a partial snapshot can never bleed
+   * into prior data — callers that want to merge instead of replace
+   * should aggregate before calling.
    */
-  import(data: { playerStats: PlayerSeasonStats[]; teamStats: [number, TeamGameStats[]][] }): void {
+  import(data: {
+    season?: number;
+    playerStats: PlayerSeasonStats[];
+    teamStats: Array<[number, TeamGameStats[]]>;
+  }): void {
+    if (typeof data.season === 'number') {
+      this.season = data.season;
+    }
     this.playerSeasonStats.clear();
     this.teamSeasonStats.clear();
 

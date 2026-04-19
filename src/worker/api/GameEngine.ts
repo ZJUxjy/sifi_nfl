@@ -261,6 +261,12 @@ export class GameEngine {
       timestamp: Date.now(),
       name: saveName,
       state: this.state,
+      // FL5: persist the per-engine StatsManager. Without this the
+      // accumulator was silently dropped on reload — the season's
+      // pass/rush/recv totals reset to zero on every load. Snapshot is
+      // intentionally a plain JSON-safe shape so it survives both the
+      // node JSON.stringify branch below and IDB's structured clone.
+      stats: this.statsManager ? this.statsManager.export() : null,
     };
 
     if (typeof window !== 'undefined') {
@@ -292,6 +298,19 @@ export class GameEngine {
       this.seasonManager = new SeasonManager(this.state.season, this.state.teams);
       this.seasonManager.currentWeek = this.state.week;
       this.seasonManager.schedule = this.state.schedule;
+    }
+
+    // FL5: always install a *fresh* StatsManager. Reusing the existing
+    // instance (even via `.import()` alone) would let the prior in-memory
+    // accumulator survive when the same engine reloads a different save
+    // for the same season — that's the cross-save leak the brief calls
+    // out, orthogonal to the P2/D1 instance-isolation fix. Construct
+    // first, then optionally hydrate from the snapshot if present.
+    // Old saves with no `stats` field fall through to an empty manager,
+    // which is the expected backward-compat behaviour.
+    this.statsManager = new StatsManager(this.state.season);
+    if (saveData.stats) {
+      this.statsManager.import(saveData.stats);
     }
   }
 
