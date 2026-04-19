@@ -49,7 +49,27 @@ export class GameSim {
   
   overtimeState?: 'initial' | 'firstPossession' | 'secondPossession' | 'over';
   overtimes = 0;
+  /**
+   * Cap on how many OT periods `run()` will start. Regular season caps at
+   * 1 (tie game allowed); playoffs lift the cap so the loop keeps going
+   * until a winner emerges. Initialized in the constructor based on the
+   * `playoffs` flag.
+   */
   maxOvertimes = 1;
+  /**
+   * Sub-state flag for the OT state machine. Set when both teams have had
+   * a possession in OT and the score is tied — the next score (any kind)
+   * ends the game. Kept as a separate flag instead of widening
+   * `overtimeState` so the existing union (frozen by A8) is preserved.
+   */
+  overtimeSuddenDeath = false;
+  /**
+   * Tracks which team got first possession in the current OT period.
+   * Captured at the top of `simOvertime` so the state machine can
+   * attribute "first vs second possession" without having to inspect
+   * play-by-play history.
+   */
+  overtimeFirstPossessionTeam?: TeamNum;
   
   playByPlayLogger: PlayByPlayLogger;
   playUntimedPossession = false;
@@ -105,6 +125,11 @@ export class GameSim {
     this.statsManager = statsManager;
     this.playoffs = playoffs;
     this.season = season;
+    // Playoff games cannot end in a tie. The run() loop is gated on
+    // `overtimes < maxOvertimes`, so we lift the cap (10 is a safety
+    // ceiling well beyond any historical NFL OT length and prevents
+    // a runaway sim if scoring helpers were ever miswired).
+    this.maxOvertimes = playoffs ? 10 : 1;
 
     this.awaitingKickoff = Math.random() < 0.5 ? 0 : 1;
     this.d = this.awaitingKickoff;
@@ -159,19 +184,173 @@ export class GameSim {
     }
   }
 
+  /**
+   * NFL modern overtime — drives a single OT period.
+   *
+   * State machine (shared with `advanceOvertimeOnScore` /
+   * `advanceOvertimeOnPossessionChange`):
+   *
+   *   initial (first team has the ball, OT just started):
+   *     TD                                  → over (scoring team wins)
+   *     FG                                  → secondPossession
+   *     safety                              → secondPossession
+   *     turnover (punt / INT / fumble /     → secondPossession
+   *               4-down / missed FG)
+   *
+   *   secondPossession (second team has had a chance to respond):
+   *     TD                                  → over (scoring team wins)
+   *     safety                              → over (game decided)
+   *     FG when scores are tied             → suddenDeath ON
+   *     FG when scoring team takes a lead   → over (scoring team wins)
+   *     turnover when scores are tied       → suddenDeath ON
+   *     turnover when there is a leader     → over (leader wins)
+   *
+   *   suddenDeath (both teams had a possession; scores still tied):
+   *     any score                           → over (scoring team wins)
+   *     turnover                            → no-op (keep playing)
+   *
+   * Period termination:
+   *   - regular season: clock hits 0 → period ends; `run()` will not
+   *     start another (maxOvertimes = 1) → game ends in tie.
+   *   - playoff: clock hits 0 → period ends; `run()` starts another OT
+   *     period because maxOvertimes > 1. Each new period resets state
+   *     to `initial`, which intentionally simplifies the real NFL
+   *     "subsequent OT periods are sudden death" rule into "another
+   *     two-possession period".
+   *
+   * Simplification: an OT touchdown does NOT play through XP / 2PT.
+   * The state flips to 'over' the moment the TD lands, which exits the
+   * loop before `simPlay` would route into `doExtraPoint`. The 6-point
+   * TD is decisive in every reachable OT scoring path under the rules
+   * above (first-possession TD wins outright; second-possession TD ties
+   * or wins regardless of conversion; sudden-death TD wins outright).
+   * Skipping the conversion keeps us out of `awaitingAfterTouchdown`
+   * mid-termination.
+   */
   simOvertime(): void {
     this.overtimeState = 'initial' as typeof this.overtimeState;
+    this.overtimeSuddenDeath = false;
+    // Whoever's currently on offense at OT-start is the "first
+    // possession" team. simRegulation leaves o/d set; the existing
+    // entry-into-OT flow does not run a fresh kickoff, so we capture
+    // the offense as-is.
+    this.overtimeFirstPossessionTeam = this.o;
     this.clock = 10;
     this.quarter = this.numPeriods + this.overtimes + 1;
-    
+
     this.playByPlayLogger.logEvent({
       type: 'overtime',
       clock: this.clock,
       overtimeNum: this.overtimes + 1,
     });
-    
+
     while (this.clock > 0 && this.overtimeState !== 'over') {
       this.simPlay();
+    }
+
+    // Always mark the period 'over' on exit. The loop also exits when
+    // the clock expires without a winner (regular-season tie / playoff
+    // continuation); flagging 'over' lets callers and tests assert on
+    // a single canonical end-of-period signal regardless of the cause.
+    this.overtimeState = 'over' as typeof this.overtimeState;
+  }
+
+  /**
+   * Push the OT state machine forward in response to a score.
+   *
+   * Called by `scoreTouchdown`, `scoreSafety` and the made-FG branch of
+   * `doFieldGoal`. Becomes a no-op outside OT (`overtimeState`
+   * undefined) or after the period has already been decided
+   * (`overtimeState === 'over'`), so the callers don't need to
+   * special-case regulation play.
+   *
+   * The TD branch deliberately ends OT immediately — see the
+   * "Simplification" note on `simOvertime` for why we skip XP / 2PT
+   * inside OT.
+   */
+  advanceOvertimeOnScore(scoreType: 'td' | 'fg' | 'safety'): void {
+    if (this.overtimeState === undefined || this.overtimeState === 'over') {
+      return;
+    }
+
+    if (this.overtimeSuddenDeath) {
+      this.overtimeState = 'over' as typeof this.overtimeState;
+      return;
+    }
+
+    if (scoreType === 'td') {
+      this.overtimeState = 'over' as typeof this.overtimeState;
+      return;
+    }
+
+    if (scoreType === 'safety') {
+      // initial: defending team got 2, but the OT-receiving (offensive)
+      // side still owes its first proper possession via the free-kick
+      // that follows a safety. Per the spec table, that's modeled as
+      // ceding the next possession → secondPossession.
+      // secondPossession: a safety means the leader/defender just
+      // padded the score; OT is decided.
+      this.overtimeState = (this.overtimeState === 'initial'
+        ? 'secondPossession'
+        : 'over') as typeof this.overtimeState;
+      return;
+    }
+
+    // FG: depends on which possession we're in.
+    if (this.overtimeState === 'initial') {
+      this.overtimeState = 'secondPossession' as typeof this.overtimeState;
+      return;
+    }
+
+    // FG on second possession: tie → sudden death; otherwise the
+    // scoring team has taken the lead and OT is over.
+    if (this.team[0].stat.pts === this.team[1].stat.pts) {
+      this.overtimeSuddenDeath = true;
+      // Keep overtimeState as 'secondPossession'. The suddenDeath flag
+      // is the actual driver from this point on; mutating the union to
+      // a fresh value would either widen the type (forbidden — A8 froze
+      // it) or look like the period had reset.
+    } else {
+      this.overtimeState = 'over' as typeof this.overtimeState;
+    }
+  }
+
+  /**
+   * Push the OT state machine forward in response to a turnover —
+   * INT (without a return-TD), fumble (ditto), missed FG, blocked
+   * kick (without a return-TD), punt landing, or turnover-on-downs.
+   * Called BEFORE the corresponding `possessionChange()` so the state
+   * is observable by anything reading `overtimeState` mid-flow.
+   *
+   * NOT called from the post-score kickoff in `doKickoff` (touchback
+   * branch). That kickoff IS what physically gives the second team
+   * the ball after a first-possession FG, but the score helper above
+   * has already advanced the state — calling this here too would
+   * double-advance from `secondPossession` to `over`.
+   */
+  advanceOvertimeOnPossessionChange(): void {
+    if (this.overtimeState === undefined || this.overtimeState === 'over') {
+      return;
+    }
+
+    // Turnovers extend a sudden-death period; only a score ends it.
+    if (this.overtimeSuddenDeath) {
+      return;
+    }
+
+    if (this.overtimeState === 'initial') {
+      this.overtimeState = 'secondPossession' as typeof this.overtimeState;
+      return;
+    }
+
+    // secondPossession turnover without a score: leader wins outright;
+    // tied (i.e., 0-0 because both teams turned over) extends into
+    // sudden death — matches the NFL 2022+ "both teams get a chance"
+    // rule.
+    if (this.team[0].stat.pts === this.team[1].stat.pts) {
+      this.overtimeSuddenDeath = true;
+    } else {
+      this.overtimeState = 'over' as typeof this.overtimeState;
     }
   }
 
@@ -385,6 +564,7 @@ export class GameSim {
           });
           this.scoreDefensiveTouchdown(interceptor);
         } else {
+          this.advanceOvertimeOnPossessionChange();
           this.possessionChange();
         }
         return;
@@ -414,6 +594,7 @@ export class GameSim {
           clock: this.clock,
           t: this.d,
         });
+        this.advanceOvertimeOnPossessionChange();
         this.possessionChange();
       }
       return;
@@ -538,6 +719,7 @@ export class GameSim {
         });
         this.scoreDefensiveTouchdown(recoverer);
       } else {
+        this.advanceOvertimeOnPossessionChange();
         this.possessionChange();
       }
       return;
@@ -615,7 +797,9 @@ export class GameSim {
       this.recordStat(this.o, kicker, 'fgLng', distance);
       this.team[this.o].stat.pts += 3;
       this.awaitingKickoff = this.o;
+      this.advanceOvertimeOnScore('fg');
     } else {
+      this.advanceOvertimeOnPossessionChange();
       this.possessionChange();
     }
   }
@@ -653,7 +837,8 @@ export class GameSim {
     if (touchback) {
       this.scrimmage = SCRIMMAGE_TOUCHBACK;
     }
-    
+
+    this.advanceOvertimeOnPossessionChange();
     this.possessionChange();
   }
 
@@ -870,9 +1055,9 @@ export class GameSim {
     this.team[this.o].stat.pts += 6;
     this.awaitingAfterTouchdown = true;
     this.isClockRunning = false;
-    if (this.overtimeState !== undefined) {
-      this.overtimeState = 'over';
-    }
+    // OT TD ends the period immediately. The XP/2PT step is intentionally
+    // skipped in OT — see the "Simplification" note on simOvertime.
+    this.advanceOvertimeOnScore('td');
   }
 
   /**
@@ -986,6 +1171,7 @@ export class GameSim {
       // Defense recovers but does not score; flip possession at the
       // spot. The kick never traveled, so scrimmage is still at the
       // original line; possessionChange() inverts it as usual.
+      this.advanceOvertimeOnPossessionChange();
       this.possessionChange();
     }
     return true;
@@ -996,6 +1182,7 @@ export class GameSim {
     this.awaitingAfterSafety = true;
     this.isClockRunning = false;
     this.awaitingKickoff = this.o;
+    this.advanceOvertimeOnScore('safety');
   }
 
   updateState(yds: number): void {
@@ -1016,6 +1203,7 @@ export class GameSim {
           clock: this.clock,
           t: this.d,
         });
+        this.advanceOvertimeOnPossessionChange();
         this.possessionChange();
       }
     }

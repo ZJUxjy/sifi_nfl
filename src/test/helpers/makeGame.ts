@@ -118,6 +118,11 @@ export interface MakeGameOptions {
   /** Override the default 4×15 minute regulation. */
   quarterLength?: number;
   numPeriods?: number;
+  /**
+   * Toggle the GameSim `playoffs` flag. Used by overtime tests where
+   * playoff and regular-season have different OT termination rules.
+   */
+  playoffs?: boolean;
 }
 
 /**
@@ -133,6 +138,7 @@ export function makeGame(opts: MakeGameOptions = {}): GameSim {
     teams: [home, away],
     quarterLength: opts.quarterLength ?? 15,
     numPeriods: opts.numPeriods ?? 4,
+    playoffs: opts.playoffs ?? false,
   });
 
   // Pin the kickoff side so the constructor's Math.random doesn't make tests flaky.
