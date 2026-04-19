@@ -51,6 +51,18 @@ export type ScoringEventInput =
       t: TeamNum;
     }
   | {
+      type: 'twoPointConversion';
+      clock: number;
+      names: string[];
+      t: TeamNum;
+      success: boolean;
+      // The play type used for the attempt — kept on the event so the
+      // play-by-play UI can render "QB pass" vs "RB rush" without
+      // having to infer it from the player position. A successful
+      // attempt is worth 2 points; a failure is worth 0 (no kick).
+      playType: 'pass' | 'run';
+    }
+  | {
       type: 'sack';
       clock: number;
       names: string[];
@@ -229,6 +241,7 @@ class PlayByPlayLogger {
       'run',
       'fieldGoal',
       'extraPoint',
+      'twoPointConversion',
       'sack',
       'interception',
       'fumble',
@@ -304,6 +317,11 @@ class PlayByPlayLogger {
         break;
       case 'extraPoint':
         parts.push(`${event.names[0]} ${event.made ? 'makes' : 'misses'} XP`);
+        break;
+      case 'twoPointConversion':
+        parts.push(
+          `${event.names[0]} 2-pt ${event.playType} ${event.success ? 'GOOD' : 'NO GOOD'}`,
+        );
         break;
       case 'interception':
         parts.push(`Pass intercepted by ${event.names[0]}`);

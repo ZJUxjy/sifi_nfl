@@ -618,6 +618,14 @@ export class GameSim {
   }
 
   doExtraPoint(): void {
+    // After a TD the offence picks XP vs 2PT. Routing happens here (rather
+    // than in simPlay) so any future call site that wants "the post-TD play"
+    // gets the AI's choice for free without re-implementing the dispatch.
+    if (this.decideXpOrTwo() === 'two') {
+      this.doTwoPointConversion();
+      return;
+    }
+
     const kicker = this.getPlayer(this.o, 'K');
     const distance = 100 - SCRIMMAGE_EXTRA_POINT + FIELD_GOAL_DISTANCE_ADDED;
     
@@ -639,6 +647,81 @@ export class GameSim {
       this.team[this.o].stat.pts += 1;
     }
     
+    this.awaitingAfterTouchdown = false;
+    this.awaitingKickoff = this.o;
+  }
+
+  /**
+   * Decide whether to attempt a 2-point conversion or kick the extra point
+   * after a touchdown. Pure situational AI — only reads `this.quarter`,
+   * `this.clock`, and the two team scores, so there are no hidden coupling
+   * points with the rest of the simulation (penalties, injuries, etc.).
+   *
+   * Heuristic, intentionally simple:
+   *   1. Late 4Q (any clock) when the scoring team is exactly down by 2:
+   *      tying the game in regulation is the canonical 2PT spot, so go
+   *      for it ~90% of the time. The 10% reserve avoids being fully
+   *      deterministic in this branch.
+   *   2. Late 4Q (clock < 5 minutes) when the scoring team trails by a
+   *      margin where 2 points changes the win/loss math (-1, -5, -8,
+   *      -10, -12): ~60% chance.
+   *   3. Otherwise (early game, comfortable lead, etc.): 5% baseline so
+   *      season totals still surface occasional 2PT attempts.
+   *
+   * The decision runs AFTER scoreTouchdown() has bumped `pts` by 6, so
+   * `scoreDiff` here reflects the post-TD scoreboard.
+   */
+  decideXpOrTwo(): 'xp' | 'two' {
+    const scoreDiff = this.team[this.o].stat.pts - this.team[this.d].stat.pts;
+    const isFourthQuarter = this.quarter === this.numPeriods;
+    const lateInGame = isFourthQuarter && this.clock < 5;
+    // Margins where converting two points materially changes the outcome
+    // (tie, one-score game, two-possession game). Down-by-1 is included
+    // because XP makes it tie; 2PT makes it a one-point lead in regulation.
+    const goForTwoMargins = new Set([-1, -5, -8, -10, -12]);
+
+    if (isFourthQuarter && scoreDiff === -2) {
+      return Math.random() < 0.9 ? 'two' : 'xp';
+    }
+    if (lateInGame && goForTwoMargins.has(scoreDiff)) {
+      return Math.random() < 0.6 ? 'two' : 'xp';
+    }
+    return Math.random() < 0.05 ? 'two' : 'xp';
+  }
+
+  /**
+   * Single-snap 2-point conversion from the 2-yard line. Picks a pass or
+   * run with equal probability. Success rate is fixed at ~48% — the NFL
+   * 2003-2023 historical average — and is deliberately play-type-agnostic
+   * to avoid coupling to the heavier doPass / doRun implementations
+   * (penalty, sack and injury machinery are all inappropriate for a
+   * single conversion attempt).
+   *
+   * Both branches finish the after-TD state machine identically to a
+   * completed XP: clear `awaitingAfterTouchdown` and queue the scoring
+   * team's kickoff. Skipping either of those would deadlock the loop in
+   * `simPlay()`, which is the bug B2 fixed for the XP path.
+   */
+  doTwoPointConversion(): void {
+    const playType: 'pass' | 'run' = Math.random() < 0.5 ? 'pass' : 'run';
+    const success = Math.random() < 0.48;
+    const player = playType === 'pass'
+      ? this.getPlayer(this.o, 'QB')
+      : (this.getPlayer(this.o, 'RB') || this.getPlayer(this.o, 'QB'));
+
+    this.playByPlayLogger.logEvent({
+      type: 'twoPointConversion',
+      clock: this.clock,
+      names: [player.name],
+      t: this.o,
+      success,
+      playType,
+    });
+
+    if (success) {
+      this.team[this.o].stat.pts += 2;
+    }
+
     this.awaitingAfterTouchdown = false;
     this.awaitingKickoff = this.o;
   }
