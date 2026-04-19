@@ -40,7 +40,12 @@ function ImperialCupView({ team }: ImperialCupViewProps) {
   const isCupYear = engine.isImperialCupYear(season);
   const nextCupYear = engine.getNextImperialCupYear(season);
 
-  // Initialize or get imperial cup
+  // Initialize or get imperial cup.
+  // `teams` was previously listed as a "data changed" trigger but is never
+  // read inside this memo — `qualifyForImperialCup` and
+  // `generateImperialCupBracket` consume the engine's own roster snapshot.
+  // Listing it caused an exhaustive-deps warning (unnecessary dep), so it's
+  // dropped from the array.
   const currentImperialCup = useMemo(() => {
     if (!isCupYear) return null;
 
@@ -56,7 +61,7 @@ function ImperialCupView({ team }: ImperialCupViewProps) {
     }
 
     return imperialCup;
-  }, [isCupYear, season, teams, engine, imperialCup]);
+  }, [isCupYear, season, engine, imperialCup]);
 
   // Get team's participation status
   const teamStatus = useMemo(() => {

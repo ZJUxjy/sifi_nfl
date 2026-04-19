@@ -11,10 +11,22 @@ import {
   Modal,
   Form,
 } from 'react-bootstrap';
-import { useGameStore } from '../stores/gameStore';
+import {
+  useSeason,
+  useTeams,
+  usePlayers,
+  useSyncState,
+} from '../stores/selectors';
 import { getGameEngine } from '../../worker/api';
 import type { DraftProspectInternal as DraftProspect } from '../../worker/api/types';
 import type { Team, Player } from '@common/entities';
+
+// Hoisted to module scope so the constant has a stable identity across
+// renders. Previously it was defined inside the component, which made the
+// `useEffect` that consumes it fail `react-hooks/exhaustive-deps` (the dep
+// would have been a fresh array reference on every render, causing the
+// effect to re-fire constantly if listed honestly).
+const DRAFT_REGIONS = ['firstContinent', 'secondContinent'];
 
 interface DraftRoomProps {
   team: Team;
@@ -50,7 +62,13 @@ interface DraftResult {
 }
 
 function DraftRoom({ team, onDraftComplete }: DraftRoomProps) {
-  const { season, teams, players, syncState } = useGameStore();
+  // Use fine-grained selectors instead of the whole-store subscription so the
+  // draft room only re-renders when slices it actually reads change (per D3
+  // pattern).
+  const season = useSeason();
+  const teams = useTeams();
+  const players = usePlayers();
+  const syncState = useSyncState();
   const engine = getGameEngine();
 
   const [draftPool, setDraftPool] = useState<DraftProspect[]>([]);
@@ -63,9 +81,6 @@ function DraftRoom({ team, onDraftComplete }: DraftRoomProps) {
   const [showProspectModal, setShowProspectModal] = useState(false);
   const [showDraftModal, setShowDraftModal] = useState(false);
   const [noDraft, setNoDraft] = useState(false);
-
-  // Regions that have draft system
-  const DRAFT_REGIONS = ['firstContinent', 'secondContinent'];
 
   // Calculate draft order (only for regions with draft)
   useEffect(() => {
@@ -81,7 +96,12 @@ function DraftRoom({ team, onDraftComplete }: DraftRoomProps) {
     setDraftOrder(order);
   }, [teams, season, team.region, engine]);
 
-  // Generate draft pool based on number of teams
+  // Generate draft pool based on number of teams.
+  // `engine` is added to deps to satisfy `react-hooks/exhaustive-deps`; it is
+  // a referentially stable singleton (`getGameEngine()`), so adding it does
+  // not cause spurious re-runs. The only meaningful trigger is
+  // `draftOrder.length` (we only rebuild the pool when the number of
+  // drafting teams changes).
   useEffect(() => {
     if (noDraft || draftOrder.length === 0) return;
 
@@ -90,7 +110,7 @@ function DraftRoom({ team, onDraftComplete }: DraftRoomProps) {
     const pool = engine.generateDraftPool(numProspects);
     setDraftPool(pool);
     setShowDraftModal(true);
-  }, [season, draftOrder.length, noDraft]);
+  }, [season, draftOrder.length, noDraft, engine]);
 
   // Create draft picks
   const draftPicks = useMemo(() => {
