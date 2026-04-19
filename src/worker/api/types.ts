@@ -21,6 +21,22 @@ export type {
   TradeAsset,
   TradeProposal as TradeProposalInternal,
 } from '@worker/core/trade/evaluate';
+export type { DraftProspect as DraftProspectInternal } from '@worker/core/draft';
+export type { FreeAgentDemand } from '@worker/core/freeAgent';
+export type {
+  ImperialCupMatch,
+  ImperialCupSeason,
+  ImperialCupRound,
+  ImperialCupHistory,
+} from '@worker/core/imperialCup';
+export type {
+  PlayoffBracket,
+  PlayoffMatchup,
+  DoubleEliminationBracket,
+  DoubleEliminationRound,
+} from '@worker/core/playoffs';
+export type { StatsManager } from '@worker/core/stats/StatsManager';
+export type { GameSim } from '@worker/core/game/GameSim';
 
 // === 核心状态 ===
 export interface GameState {

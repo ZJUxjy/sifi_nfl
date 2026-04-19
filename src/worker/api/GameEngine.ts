@@ -20,21 +20,43 @@ import {
   evaluateTrade as evalTrade,
   createTradeAsset,
   shouldAcceptTrade,
-  executeTrade as doExecuteTrade,
+  isPlayerTradable as doIsPlayerTradable,
 } from '../core/trade';
+import type { TradeAsset, TradeProposal as InternalTradeProposal } from '../core/trade/evaluate';
 import {
   generateContractDemand,
   evaluateOffer,
   signFreeAgent as doSignFreeAgent,
   releasePlayer as doReleasePlayer,
+  type FreeAgentDemand,
 } from '../core/freeAgent';
 import {
-  generateDraftPool,
+  generateDraftPool as doGenerateDraftPool,
   calculateDraftOrder,
   generateDraftPicks,
   selectPlayer as doSelectPlayer,
   getEligiblePlayersForOriginDraft,
 } from '../core/draft';
+import {
+  isImperialCupYear as doIsImperialCupYear,
+  getNextImperialCupYear as doGetNextImperialCupYear,
+  qualifyForImperialCup as doQualifyForImperialCup,
+  generateImperialCupBracket as doGenerateImperialCupBracket,
+  advanceRound as doAdvanceImperialCupRound,
+  type ImperialCupMatch,
+} from '../core/imperialCup';
+import {
+  generateSingleEliminationBracket as doGenerateSingleEliminationBracket,
+  advanceSingleEliminationRound as doAdvanceSingleEliminationRound,
+  isPlayoffComplete as doIsPlayoffComplete,
+  type PlayoffBracket,
+  type DoubleEliminationBracket,
+} from '../core/playoffs';
+import { getStatsManager as doGetStatsManager, type StatsManager } from '../core/stats/StatsManager';
+import { GameSim as GameSimImpl } from '../core/game/GameSim';
+import { calculateCompositeRatings } from '../core/player/ovr';
+import type { PlayerSeasonStats } from '@common/stats';
+import type { TeamGameSim, PlayerGameSim } from '../core/game/types';
 import type {
   GameState,
   NewGameOptions,
@@ -562,7 +584,7 @@ export class GameEngine {
   // === Draft Methods ===
   getDraftProspects(): DraftProspect[] {
     // Generate draft pool if not already generated for this season
-    return generateDraftPool(this.state.season, 224);
+    return doGenerateDraftPool(this.state.season, 224) as unknown as DraftProspect[];
   }
 
   draftPlayer(prospectId: number): { success: boolean; reason?: string } {
@@ -1022,6 +1044,257 @@ export class GameEngine {
   isSeasonComplete(): boolean {
     const totalWeeks = 17; // Regular season weeks
     return this.state.week > totalWeeks || this.state.phase >= 4;
+  }
+
+  // === Public wrappers (Task 22): UI/CLI must reach worker/core ===
+  // === through these methods instead of importing internals.    ===
+
+  // -- Trade --
+  getPlayerTradeValue(player: Player): number {
+    return calculatePlayerValue(player, this.state.season);
+  }
+
+  getPickTradeValue(pick: DraftPick): number {
+    return calculatePickValue(pick);
+  }
+
+  isPlayerTradable(player: Player): boolean {
+    return doIsPlayerTradable(player);
+  }
+
+  buildTradeAsset(
+    type: 'player' | 'pick' | 'cash',
+    data: Player | DraftPick | number
+  ): TradeAsset {
+    return createTradeAsset(type, data, this.state.season);
+  }
+
+  /**
+   * Evaluate a trade composed from raw assets (built via buildTradeAsset).
+   * Used by the trade-center UI which manipulates assets directly.
+   */
+  evaluateAssetTrade(proposal: InternalTradeProposal): {
+    fair: boolean;
+    fromValue: number;
+    toValue: number;
+  } {
+    return evalTrade(proposal);
+  }
+
+  aiAcceptsTrade(proposal: InternalTradeProposal): boolean {
+    return shouldAcceptTrade(proposal, true);
+  }
+
+  /**
+   * Move a player from one team to another (raw transfer used by the
+   * trade-center execute flow).
+   */
+  transferPlayer(pid: number, toTid: number): boolean {
+    const player = this.getPlayer(pid);
+    if (!player) return false;
+    player.tid = toTid;
+    return true;
+  }
+
+  // -- Draft --
+  generateDraftPool(numProspects: number): DraftProspect[] {
+    return doGenerateDraftPool(this.state.season, numProspects) as unknown as DraftProspect[];
+  }
+
+  /**
+   * Compute the draft order for a region using current state's
+   * win/loss records (Task 10 fix already applied internally).
+   */
+  getRegionalDraftOrder(region: Region): number[] {
+    const regionTeams = this.state.teams
+      .filter(t => t.region === region)
+      .map(t => ({ tid: t.tid, won: t.won, lost: t.lost, region: t.region }));
+    return calculateDraftOrder(regionTeams, this.state.season);
+  }
+
+  selectDraftedPlayer(
+    teamTid: number,
+    prospect: DraftProspect,
+    pick: { round: number; pick: number; teamTid: number; teamName: string }
+  ): Player {
+    const dpick: DraftPick = {
+      dpid: Date.now(),
+      tid: teamTid,
+      originalTid: teamTid,
+      round: pick.round,
+      pick: pick.pick,
+      season: this.state.season,
+    };
+    return doSelectPlayer(teamTid, prospect as any, dpick, this.state.season);
+  }
+
+  // -- Free Agency --
+  getFreeAgentDemand(player: Player): FreeAgentDemand {
+    return generateContractDemand(player);
+  }
+
+  evaluateFreeAgentOffer(
+    player: Player,
+    demand: FreeAgentDemand,
+    offer: { salary: number; years: number; team: Team }
+  ): { accepted: boolean; reason: string } {
+    return evaluateOffer(player, demand, offer);
+  }
+
+  /**
+   * Direct contract sign that mirrors the worker/core signFreeAgent
+   * helper (used by the FA UI which has already validated the offer).
+   * The high-level `signFreeAgent` method above also runs the AI
+   * evaluation; this one is a raw transfer.
+   */
+  commitFreeAgentSigning(
+    player: Player,
+    team: Team,
+    salary: number,
+    years: number
+  ): void {
+    doSignFreeAgent(player, team, salary, years, this.state.season);
+    this.state.freeAgents = this.state.freeAgents.filter(p => p.pid !== player.pid);
+    if (!this.state.players.find(p => p.pid === player.pid)) {
+      this.state.players.push(player);
+    }
+  }
+
+  releaseFreeAgent(player: Player): void {
+    doReleasePlayer(player);
+  }
+
+  // -- Imperial Cup --
+  isImperialCupYear(season: number = this.state.season): boolean {
+    return doIsImperialCupYear(season);
+  }
+
+  getNextImperialCupYear(season: number = this.state.season): number {
+    return doGetNextImperialCupYear(season);
+  }
+
+  qualifyForImperialCup(): number[] {
+    return doQualifyForImperialCup(this.state.teams, this.getStandings());
+  }
+
+  generateImperialCupBracket(qualifiedTeams: number[]): ImperialCupMatch[] {
+    return doGenerateImperialCupBracket(qualifiedTeams);
+  }
+
+  advanceImperialCupRound(matches: ImperialCupMatch[]): ImperialCupMatch[] | null {
+    return doAdvanceImperialCupRound(matches);
+  }
+
+  // -- Playoffs --
+  generateSingleEliminationBracket(teams: Team[], region: Region): PlayoffBracket {
+    return doGenerateSingleEliminationBracket(teams, region, this.state.season);
+  }
+
+  advanceSingleEliminationRound(bracket: PlayoffBracket): void {
+    doAdvanceSingleEliminationRound(bracket, this.state.players, this.state.season);
+  }
+
+  isPlayoffComplete(bracket: PlayoffBracket | DoubleEliminationBracket): boolean {
+    return doIsPlayoffComplete(bracket);
+  }
+
+  // -- Stats --
+  getStatsManager(season: number = this.state.season): StatsManager {
+    return doGetStatsManager(season);
+  }
+
+  getAllPlayerStats(season: number = this.state.season): PlayerSeasonStats[] {
+    return this.getStatsManager(season).getAllPlayerStats();
+  }
+
+  // -- Game simulation factory (Task 22 wrapper; Task 23 will move it ---
+  // to a Web Worker, but the public surface stays the same).            ---
+  convertPlayerToGameSim(player: Player): PlayerGameSim {
+    const compositeRating = calculateCompositeRatings(player);
+    return {
+      pid: player.pid,
+      name: player.name,
+      pos: player.pos,
+      hgt: player.hgt,
+      stre: player.stre,
+      spd: player.spd,
+      endu: player.endu,
+      thv: player.thv,
+      thp: player.thp,
+      tha: player.tha,
+      bsc: player.bsc,
+      elu: player.elu,
+      rtr: player.rtr,
+      hnd: player.hnd,
+      rbk: player.rbk,
+      pbk: player.pbk,
+      pcv: player.pcv,
+      tck: player.tck,
+      prs: player.prs,
+      rns: player.rns,
+      kpw: player.kpw,
+      kac: player.kac,
+      ppw: player.ppw,
+      pac: player.pac,
+      fuzz: player.fuzz,
+      ovr: player.ovr,
+      pot: player.pot,
+      stat: {},
+      compositeRating: compositeRating as any,
+      energy: 100,
+      ptModifier: 1,
+      injury: player.injury,
+    };
+  }
+
+  convertTeamToGameSim(team: Team, players: Player[]): TeamGameSim {
+    const gameSimPlayers = players.map(p => this.convertPlayerToGameSim(p));
+    const positions = ['QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'CB', 'S', 'K', 'P', 'KR', 'PR'];
+    const depth: Record<string, PlayerGameSim[]> = {};
+    for (const pos of positions) {
+      depth[pos] = gameSimPlayers
+        .filter(p => p.pos === pos)
+        .sort((a, b) => b.ovr - a.ovr);
+    }
+    return {
+      id: team.tid,
+      stat: { pts: 0 },
+      player: gameSimPlayers,
+      compositeRating: {},
+      depth,
+    };
+  }
+
+  /**
+   * Construct an interactive GameSim instance configured with the
+   * current season's StatsManager. Returned object is the actual
+   * GameSim and exposes simPlay / clock / quarter / team for the UI
+   * loop. Callers should treat it as opaque and prefer engine APIs
+   * for anything they can.
+   */
+  createGameSim(opts: {
+    homeTeam: Team;
+    awayTeam: Team;
+    homePlayers: Player[];
+    awayPlayers: Player[];
+    quarterLength?: number;
+    numPeriods?: number;
+    playoffs?: boolean;
+    gid?: number;
+    day?: number;
+  }): GameSimImpl {
+    const homeSim = this.convertTeamToGameSim(opts.homeTeam, opts.homePlayers);
+    const awaySim = this.convertTeamToGameSim(opts.awayTeam, opts.awayPlayers);
+    return new GameSimImpl({
+      gid: opts.gid ?? Date.now(),
+      day: opts.day ?? 1,
+      teams: [homeSim, awaySim],
+      quarterLength: opts.quarterLength ?? 15,
+      numPeriods: opts.numPeriods ?? 4,
+      statsManager: this.getStatsManager(),
+      playoffs: opts.playoffs ?? false,
+      season: this.state.season,
+    });
   }
 }
 
