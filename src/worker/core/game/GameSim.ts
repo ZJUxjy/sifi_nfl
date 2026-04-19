@@ -227,7 +227,18 @@ export class GameSim {
    * Skipping the conversion keeps us out of `awaitingAfterTouchdown`
    * mid-termination.
    */
-  simOvertime(): void {
+  /**
+   * Initialise a single OT period: reset the state machine flags, set
+   * the clock + quarter for the period, and emit the `overtime`
+   * play-by-play event. Extracted from `simOvertime()` so async drivers
+   * (the Web Worker streaming path) can reuse the same setup without
+   * having to copy the boilerplate or re-implement the state machine.
+   *
+   * After calling this, the caller is expected to drive `simPlay()`
+   * until either the clock expires or `overtimeState === 'over'`,
+   * mirroring the loop in `simOvertime()`.
+   */
+  beginOvertimePeriod(): void {
     this.overtimeState = 'initial' as typeof this.overtimeState;
     this.overtimeSuddenDeath = false;
     // Whoever's currently on offense at OT-start is the "first
@@ -243,6 +254,10 @@ export class GameSim {
       clock: this.clock,
       overtimeNum: this.overtimes + 1,
     });
+  }
+
+  simOvertime(): void {
+    this.beginOvertimePeriod();
 
     while (this.clock > 0 && this.overtimeState !== 'over') {
       this.simPlay();
