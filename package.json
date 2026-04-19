@@ -21,7 +21,7 @@
     "lint-js": "node --run pre-test && eslint",
     "lint-ts": "node --run pre-test && tsc",
     "pre-test": "node tools/pre-test.ts",
-    "test": "node --run pre-test && vitest --run",
+    "test": "node --run pre-test && NODE_OPTIONS='--max-old-space-size=4096' vitest --run",
     "prettier": "prettier --write \"*.{mjs,cjs,js,json,scss,ts,tsx}\" \"public/**/*.{mjs,cjs,js,json,scss,ts,tsx}\" \"src/**/*.{mjs,cjs,js,json,scss,ts,tsx}\" \"tools/**/*.{mjs,cjs,js,json,scss,ts,tsx}\"",
     "cli": "tsx src/cli/main.ts",
     "play": "tsx src/cli/main.ts"
