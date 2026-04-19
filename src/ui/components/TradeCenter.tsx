@@ -42,7 +42,7 @@ interface SelectedAsset {
 }
 
 function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
-  const { teams, syncState } = useGameStore();
+  const { teams, syncState, season } = useGameStore();
   const engine = getGameEngine();
 
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
@@ -127,8 +127,8 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
     const proposal: TradeProposal = {
       fromTeam: team.tid,
       toTeam: selectedTeam.tid,
-      fromAssets: myAssets.map(a => createTradeAsset(a.type, a.data)),
-      toAssets: theirAssets.map(a => createTradeAsset(a.type, a.data)),
+      fromAssets: myAssets.map(a => createTradeAsset(a.type, a.data, season)),
+      toAssets: theirAssets.map(a => createTradeAsset(a.type, a.data, season)),
       status: 'pending',
     };
 
@@ -153,8 +153,8 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
     const proposal: TradeProposal = {
       fromTeam: team.tid,
       toTeam: selectedTeam.tid,
-      fromAssets: myAssets.map(a => createTradeAsset(a.type, a.data)),
-      toAssets: theirAssets.map(a => createTradeAsset(a.type, a.data)),
+      fromAssets: myAssets.map(a => createTradeAsset(a.type, a.data, season)),
+      toAssets: theirAssets.map(a => createTradeAsset(a.type, a.data, season)),
       status: 'pending',
     };
 
@@ -180,8 +180,8 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
     const proposal: TradeProposal = {
       fromTeam: team.tid,
       toTeam: selectedTeam.tid,
-      fromAssets: myAssets.map(a => createTradeAsset(a.type, a.data)),
-      toAssets: theirAssets.map(a => createTradeAsset(a.type, a.data)),
+      fromAssets: myAssets.map(a => createTradeAsset(a.type, a.data, season)),
+      toAssets: theirAssets.map(a => createTradeAsset(a.type, a.data, season)),
       status: 'accepted',
     };
 
@@ -334,7 +334,7 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
                                           {
                                             type: 'player',
                                             data: p,
-                                            value: calculatePlayerValue(p),
+                                            value: calculatePlayerValue(p, season),
                                           },
                                           true
                                         );
@@ -484,7 +484,7 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
                                           {
                                             type: 'player',
                                             data: p,
-                                            value: calculatePlayerValue(p),
+                                            value: calculatePlayerValue(p, season),
                                           },
                                           false
                                         );

@@ -421,27 +421,28 @@ export class GameEngine {
 
   // === Trade Methods ===
   evaluateTrade(proposal: TradeProposal): TradeEvaluation {
+    const season = this.state.season;
     const fromAssets = [
       ...proposal.fromPlayerIds.map(pid => {
         const player = this.getPlayer(pid);
-        return player ? createTradeAsset('player', player) : null;
+        return player ? createTradeAsset('player', player, season) : null;
       }).filter(Boolean),
-      ...(proposal.fromDraftPicks || []).map(() => createTradeAsset('pick', { dpid: 0, tid: proposal.toTeam, originalTid: proposal.fromTeam, round: 1, pick: 1, season: this.state.season })),
+      ...(proposal.fromDraftPicks || []).map(() => createTradeAsset('pick', { dpid: 0, tid: proposal.toTeam, originalTid: proposal.fromTeam, round: 1, pick: 1, season }, season)),
     ].filter(Boolean) as any[];
 
     const toAssets = [
       ...proposal.toPlayerIds.map(pid => {
         const player = this.getPlayer(pid);
-        return player ? createTradeAsset('player', player) : null;
+        return player ? createTradeAsset('player', player, season) : null;
       }).filter(Boolean),
-      ...(proposal.toDraftPicks || []).map(() => createTradeAsset('pick', { dpid: 0, tid: proposal.fromTeam, originalTid: proposal.toTeam, round: 1, pick: 1, season: this.state.season })),
+      ...(proposal.toDraftPicks || []).map(() => createTradeAsset('pick', { dpid: 0, tid: proposal.fromTeam, originalTid: proposal.toTeam, round: 1, pick: 1, season }, season)),
     ].filter(Boolean) as any[];
 
     if (proposal.fromCash) {
-      fromAssets.push(createTradeAsset('cash', proposal.fromCash));
+      fromAssets.push(createTradeAsset('cash', proposal.fromCash, season));
     }
     if (proposal.toCash) {
-      toAssets.push(createTradeAsset('cash', proposal.toCash));
+      toAssets.push(createTradeAsset('cash', proposal.toCash, season));
     }
 
     const internalProposal = {
