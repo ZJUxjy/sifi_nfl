@@ -1,10 +1,26 @@
 /**
  * SIFI NFL API Types
- * 统一的类型定义，供 GameEngine、Store 和组件使用
+ *
+ * Single source of truth for the type vocabulary that the UI / CLI
+ * are allowed to depend on. Anything UI / CLI imports from
+ * `@worker/core/...` is a layering violation; instead, re-export it
+ * from here and let consumers import from `@worker/api/types`. The
+ * ESLint `no-restricted-imports` rule enforces this boundary.
  */
 
 import type { Team, Player } from '@common/entities';
 import type { Region, Phase, Position, DraftPick } from '@common/types';
+import type { PlayByPlayEvent as InternalPlayByPlayEvent } from '@worker/core/game/PlayByPlayLogger';
+
+// Re-exports of internal worker types so UI / CLI never need to
+// reach into @worker/core directly.
+export type { PlayerGameSim, TeamGameSim, TeamNum } from '@worker/core/game/types';
+export type { PlayByPlayEvent } from '@worker/core/game/PlayByPlayLogger';
+export type { OffseasonResult, OffseasonEvent } from '@worker/core/season/offseason';
+export type {
+  TradeAsset,
+  TradeProposal as TradeProposalInternal,
+} from '@worker/core/trade/evaluate';
 
 // === 核心状态 ===
 export interface GameState {
@@ -81,19 +97,14 @@ export interface GameResult {
   homeScore: number;
   awayScore: number;
   winner: number;
-  playByPlay: PlayByPlayEvent[];
+  playByPlay: InternalPlayByPlayEvent[];
   scoringSummary: ScoringEvent[];
   penalties: PenaltySummary[];
   injuries: InjurySummary[];
 }
 
-export interface PlayByPlayEvent {
-  clock: number;
-  quarter: number;
-  type: string;
-  t?: 0 | 1;
-  [key: string]: any;
-}
+// PlayByPlayEvent intentionally re-exported above from
+// @worker/core/game/PlayByPlayLogger as the single source of truth.
 
 export interface ScoringEvent {
   team: string;

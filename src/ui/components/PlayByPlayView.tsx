@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Card, Spinner } from 'react-bootstrap';
-import type { PlayByPlayEvent } from '@worker/core/game/PlayByPlayLogger';
+import type { PlayByPlayEvent } from '@worker/api/types';
 
 interface PlayByPlayViewProps {
   events: PlayByPlayEvent[];

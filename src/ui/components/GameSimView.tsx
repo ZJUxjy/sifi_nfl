@@ -4,8 +4,12 @@ import { GameSim } from '@worker/core/game/GameSim';
 import { calculateCompositeRatings } from '@worker/core/player/ovr';
 import { getStatsManager } from '@worker/core/stats/StatsManager';
 import { useGameStore } from '../stores/gameStore';
-import type { TeamGameSim, PlayerGameSim, TeamNum } from '@worker/core/game/types';
-import type { PlayByPlayEvent } from '@worker/core/game/PlayByPlayLogger';
+import type {
+  TeamGameSim,
+  PlayerGameSim,
+  TeamNum,
+  PlayByPlayEvent,
+} from '@worker/api/types';
 import type { Team, Player } from '@common/entities';
 import Scoreboard from './Scoreboard';
 import PlayByPlayView from './PlayByPlayView';

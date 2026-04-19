@@ -12,12 +12,11 @@ import {
   type ScoringEvent,
   type PenaltySummary,
   type InjurySummary,
+  type PlayByPlayEvent,
 } from '../worker/api';
-import { GameSim } from '../worker/core/game/GameSim';
 import type { Team, Player } from '@common/entities';
 import type { Region } from '@common/types';
 import { listSaves, saveGame, loadGame, formatDate, type SaveData } from './saveManager';
-import PlayByPlayLogger, { type PlayByPlayEvent } from '../worker/core/game/PlayByPlayLogger';
 import chalk from 'chalk';
 import Table from 'cli-table3';
 import inquirer from 'inquirer';

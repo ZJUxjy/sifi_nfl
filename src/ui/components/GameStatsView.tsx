@@ -1,6 +1,6 @@
 import type { JSX } from 'react';
 import { Card, Table, Badge, Row, Col, Tab, Tabs } from 'react-bootstrap';
-import type { PlayerGameSim } from '@worker/core/game/types';
+import type { PlayerGameSim } from '@worker/api/types';
 
 interface GameStatsViewProps {
   teamNames: [string, string];

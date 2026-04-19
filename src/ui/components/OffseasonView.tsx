@@ -13,7 +13,7 @@ import {
 } from 'react-bootstrap';
 import { useGameStore } from '../stores/gameStore';
 import { getGameEngine } from '../../worker/api';
-import type { OffseasonResult, OffseasonEvent } from '../../worker/core/season/offseason';
+import type { OffseasonResult, OffseasonEvent } from '../../worker/api/types';
 
 interface OffseasonViewProps {
   onSeasonAdvanced?: () => void;
