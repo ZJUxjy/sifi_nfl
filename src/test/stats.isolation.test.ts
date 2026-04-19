@@ -9,27 +9,30 @@
  * first game's, so a QB with pid `0` finished "two games" with double
  * yardage even though only one was played per engine.
  *
- * These tests pin down the contract:
- *  - Distinct `GameEngine` instances must own distinct `StatsManager`s.
- *  - Stats recorded on engine A must never appear on engine B.
- *  - A second game on engine B for the same pid must read as a single
- *    game (gp = 1), not as a continuation of engine A's history.
+ * These tests pin down the contract directly against `StatsManager` /
+ * `GameEngine.getStatsManager()` instead of going through `sim.run()`.
+ * Driving the contract end-to-end via a real game introduced flakiness
+ * because a single game does not deterministically produce passing stats
+ * for any specific pid (a team can run-only the whole game, the QB can be
+ * benched after an injury, etc.). The bug we want to lock down is purely
+ * about whether two engines share an accumulator — `recordPlayerGameStats`
+ * is the smallest surface that lets us prove that without depending on
+ * RNG behaviour.
  */
 import { describe, it, expect } from 'vitest';
 import { GameEngine } from '../worker/api/GameEngine';
-import { GameSim } from '../worker/core/game/GameSim';
-import { makeMinimalTeam } from './helpers/makeGame';
+import { DEFAULT_PASSING_STATS } from '@common/stats';
+import type { Player } from '@common/entities';
 
-function runOneGame(engine: GameEngine, gid: number): void {
-  const sim = new GameSim({
-    gid,
-    season: 2025,
-    teams: [makeMinimalTeam(0), makeMinimalTeam(1)],
-    quarterLength: 5,
-    numPeriods: 4,
-    statsManager: engine.getStatsManager(),
-  });
-  sim.run();
+function makePlayer(pid: number, tid: number): Player {
+  return {
+    pid,
+    tid,
+    name: `Player ${pid}`,
+    pos: 'QB',
+    age: 25,
+    region: 'firstContinent',
+  } as unknown as Player;
 }
 
 describe('StatsManager isolation across GameEngine instances', () => {
@@ -44,18 +47,25 @@ describe('StatsManager isolation across GameEngine instances', () => {
     expect(sm1).not.toBe(sm2);
   });
 
-  it('does not leak per-player stats between two engines that both ran one game', () => {
+  it('does not leak per-player stats between two engines that both recorded one game', () => {
     const e1 = new GameEngine();
     const e2 = new GameEngine();
 
-    runOneGame(e1, 1);
-    runOneGame(e2, 2);
+    const sm1 = e1.getStatsManager();
+    const sm2 = e2.getStatsManager();
 
-    // pid 0 is the home QB in both makeMinimalTeam(0) rosters. Each engine
-    // should only see one game on its books.
-    const qb1 = e1.getStatsManager().getPlayerSeasonStats(0);
-    const qb2 = e2.getStatsManager().getPlayerSeasonStats(0);
+    sm1.initPlayerStats(makePlayer(0, 0));
+    sm2.initPlayerStats(makePlayer(0, 0));
 
+    sm1.recordPlayerGameStats(0, { pass: { ...DEFAULT_PASSING_STATS, att: 30, cmp: 20, yds: 250, td: 2 } });
+    sm2.recordPlayerGameStats(0, { pass: { ...DEFAULT_PASSING_STATS, att: 25, cmp: 15, yds: 180, td: 1 } });
+
+    const qb1 = sm1.getPlayerSeasonStats(0);
+    const qb2 = sm2.getPlayerSeasonStats(0);
+
+    // Both engines saw exactly one game; the singleton bug would make
+    // either side report gp=2 (one game posted, then the second engine's
+    // post aggregated on top of the cached counter).
     expect(qb1?.gp).toBe(1);
     expect(qb2?.gp).toBe(1);
   });
@@ -64,20 +74,20 @@ describe('StatsManager isolation across GameEngine instances', () => {
     const e1 = new GameEngine();
     const e2 = new GameEngine();
 
-    runOneGame(e1, 1);
-    const yds1 = e1.getStatsManager().getPlayerSeasonStats(0)?.pass.yds ?? 0;
+    const sm1 = e1.getStatsManager();
+    const sm2 = e2.getStatsManager();
 
-    runOneGame(e2, 2);
-    const yds2 = e2.getStatsManager().getPlayerSeasonStats(0)?.pass.yds ?? 0;
+    sm1.initPlayerStats(makePlayer(0, 0));
+    sm2.initPlayerStats(makePlayer(0, 0));
 
-    // A single regulation game's passing yards has a hard ceiling well
-    // under 1500 (NFL single-game record is ~554). If the second engine's
-    // manager were the same singleton as the first, yds2 would equal
-    // yds1 + game-2-yds — easily over 600 when both games posted real
-    // numbers. We assert "this is one game's worth of yards".
-    expect(yds2).toBeLessThan(1500);
-    // And the two engines' totals should be independent — neither one
-    // should be carrying the other's accumulation.
-    expect(Math.abs(yds2 - yds1)).toBeLessThan(yds1 + yds2 + 1);
+    sm1.recordPlayerGameStats(0, { pass: { ...DEFAULT_PASSING_STATS, att: 30, cmp: 20, yds: 250, td: 2 } });
+    const yds1 = sm1.getPlayerSeasonStats(0)?.pass.yds ?? 0;
+
+    sm2.recordPlayerGameStats(0, { pass: { ...DEFAULT_PASSING_STATS, att: 25, cmp: 15, yds: 180, td: 1 } });
+    const yds2 = sm2.getPlayerSeasonStats(0)?.pass.yds ?? 0;
+
+    // Each engine carries only its own input.
+    expect(yds1).toBe(250);
+    expect(yds2).toBe(180);
   });
 });
