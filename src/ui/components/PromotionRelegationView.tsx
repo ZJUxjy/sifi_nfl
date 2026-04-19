@@ -1,9 +1,9 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { Card, Table, Badge, Tabs, Tab, Alert, Row, Col, Button } from 'react-bootstrap';
 import { useUserTeam } from '../stores/gameStore';
-import { useSeason, useTeams, usePhase } from '../stores/selectors';
+import { useSeason, useTeams, usePhase, useWeek } from '../stores/selectors';
 import { getGameEngine } from '../../worker/api';
-import type { Region } from '@common/types';
+import { Phase, type Region } from '@common/types';
 
 interface PromotionRelegationViewProps {
   // No props needed - uses global state
@@ -15,32 +15,31 @@ function PromotionRelegationView({}: PromotionRelegationViewProps) {
   const season = useSeason();
   const teams = useTeams();
   const phase = usePhase();
+  // Subscribe to week so the component re-renders after `simWeek`; the engine
+  // singleton is referentially stable, so without this the inline reads below
+  // would compute against the same stale closure even after standings change.
+  const week = useWeek();
   const userTeam = useUserTeam();
   const engine = getGameEngine();
   const [activeRegion, setActiveRegion] = useState<RegionKey>(
     userTeam?.region === 'miningIsland' ? 'miningIsland' : 'originContinent'
   );
 
-  // Get promotion/relegation data
-  const prData = useMemo(() => {
-    return engine.calculateSeasonEndPromotionRelegation();
-  }, [engine, season]);
+  // Computed inline (not memoized): all three reads target a referentially
+  // stable singleton (`engine`) whose internal mutable state is not part of
+  // React's dep graph. Wrapping them in `useMemo` produced stale results
+  // because no honest dep array could express "engine standings changed".
+  // The work is O(n log n) over ~30-100 teams per render, which is cheap.
+  const prData = engine.calculateSeasonEndPromotionRelegation();
+  const standings = engine
+    .getStandings()
+    .filter(s => s.region === activeRegion)
+    .sort((a, b) => b.winPct - a.winPct);
 
-  // Get standings for active region
-  const standings = useMemo(() => {
-    const allStandings = engine.getStandings();
-    return allStandings
-      .filter(s => s.region === activeRegion)
-      .sort((a, b) => b.winPct - a.winPct);
-  }, [engine, activeRegion]);
-
-  // Get promotion/relegation zones
-  const zones = useMemo(() => {
-    return engine.getPromotionRelegationZones(activeRegion);
-  }, [engine, activeRegion]);
-
-  // Check if season is complete (simplified check)
-  const isSeasonComplete = phase >= 4;
+  // SeasonManagerV2 only ever advances `phase` up to `PHASE.PLAYOFFS` (= 3),
+  // so the previous `phase >= 4` check never fired. Treat entering playoffs
+  // as "regular season complete" — standings are final once playoffs start.
+  const isSeasonComplete = phase >= Phase.PLAYOFFS;
 
   // Format league name
   const formatLeagueName = (league: string): string => {
@@ -394,7 +393,7 @@ function PromotionRelegationView({}: PromotionRelegationViewProps) {
       <Card className="p-4 mb-4">
         <Row className="align-items-center">
           <Col>
-            <h4>Promotion & Relegation - Season {season}</h4>
+            <h4>Promotion & Relegation - Season {season}, Week {week}</h4>
             <p className="text-muted mb-0">
               View league standings with promotion and relegation zones
             </p>
