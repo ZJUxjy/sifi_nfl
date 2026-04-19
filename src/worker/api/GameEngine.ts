@@ -48,7 +48,7 @@ import {
 } from '../core/imperialCup';
 import {
   generateSingleEliminationBracket as doGenerateSingleEliminationBracket,
-  advanceSingleEliminationRound as doAdvanceSingleEliminationRound,
+  advanceSingleEliminationRoundWithGameSim as doAdvanceSingleEliminationRound,
   isPlayoffComplete as doIsPlayoffComplete,
   type PlayoffBracket,
   type DoubleEliminationBracket,

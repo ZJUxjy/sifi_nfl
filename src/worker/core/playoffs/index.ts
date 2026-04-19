@@ -25,6 +25,16 @@ export type PlayoffMatchup = {
   loser?: number;
   score?: { team1: number; team2: number };
   played: boolean;
+  /**
+   * Where the winner of this matchup advances. Omitted for the
+   * championship matchup (whose winner becomes `bracket.champion`
+   * instead). `slot: 1` writes into `team1Tid` of the target matchup,
+   * `slot: 2` writes into `team2Tid`. `matchIdx` is the index *within*
+   * the target round's matchups, not the global matchup id - this is
+   * the bug fix for the previous global-id arithmetic that produced
+   * out-of-bounds writes.
+   */
+  winnerTo?: { round: number; matchIdx: number; slot: 1 | 2 };
 };
 
 export type PlayoffBracket = {
@@ -60,8 +70,28 @@ export type DoubleEliminationBracket = {
 };
 
 /**
- * Generate single elimination playoff bracket (First/Second Continent style)
- * Top 12 teams qualify, top 4 get first-round bye
+ * Generate single elimination playoff bracket (First/Second Continent style).
+ *
+ * Layout: 12 teams, top 4 get a first-round bye. Bracket topology is
+ * laid out *eagerly* (1-4 seeds are placed into the divisional slots
+ * up-front; each non-final matchup carries `winnerTo` metadata pointing
+ * to its destination slot in the next round). This replaces the old
+ * implementation which (a) never wrote 1-4 seeds anywhere and (b) tried
+ * to derive the next-round destination from a global `matchupId`, which
+ * is meaningless once you cross round boundaries.
+ *
+ * The half/half split is the standard NFL-style fixed bracket: 1/8/9
+ * and 4/5/12 share the top half, 2/7/10 and 3/6/11 share the bottom
+ * half, so seeds #1 and #2 can only meet in the final.
+ *
+ *   Wildcard (R1)        Divisional (R2)         Conference (R3)    Final (R4)
+ *   WC0: 5v12  ──────►   D1: 4 vs WC0 winner  ┐
+ *                        D0: 1 vs WC3 winner  ┴► C0  ┐
+ *   WC3: 8v9   ──────►                              │
+ *                                                   ├► F0 (champion)
+ *   WC2: 7v10  ──────►   D2: 2 vs WC2 winner  ┐    │
+ *                        D3: 3 vs WC1 winner  ┴► C1 ┘
+ *   WC1: 6v11  ──────►
  */
 export function generateSingleEliminationBracket(
   teams: Team[],
@@ -70,60 +100,93 @@ export function generateSingleEliminationBracket(
 ): PlayoffBracket {
   const qualifiedTeams = teams.slice(0, 12);
 
-  if (qualifiedTeams.length < 12) {
-    // Fill with byes if not enough teams
-    while (qualifiedTeams.length < 12) {
-      qualifiedTeams.push({ tid: -1, name: 'TBD' } as Team);
-    }
+  // Pad with TBD teams if the caller passed in fewer than 12 (kept for
+  // compatibility with callers like PlayoffsView that occasionally hand
+  // in 8 teams - the bracket is "incomplete but inert" in that case).
+  while (qualifiedTeams.length < 12) {
+    qualifiedTeams.push({ tid: -1, name: 'TBD' } as Team);
   }
 
   const matchups: PlayoffMatchup[] = [];
   let matchupId = 1;
 
-  // Wild Card Round (Seeds 5-12)
-  // Matchups: 5 vs 12, 6 vs 11, 7 vs 10, 8 vs 9
-  const wildCardMatchups = [
-    [4, 11],   // Seed 5 vs Seed 12 (indices)
-    [5, 10],   // Seed 6 vs Seed 11
-    [6, 9],    // Seed 7 vs Seed 10
-    [7, 8],    // Seed 8 vs Seed 9
+  // Round 1 - Wildcard. The intra-round index of each matchup is what
+  // its `winnerTo.matchIdx` on the *previous* round would point to, but
+  // here R1 is the entry point so we encode the destination directly.
+  type WildCardSpec = {
+    seedHi: number; // higher seed (lower number)
+    seedLo: number; // lower seed (higher number)
+    /** divisional matchup intra-round index this winner advances into */
+    divMatchIdx: number;
+  };
+  const wildCardSpecs: WildCardSpec[] = [
+    { seedHi: 5, seedLo: 12, divMatchIdx: 1 }, // 5v12 → vs seed 4
+    { seedHi: 6, seedLo: 11, divMatchIdx: 3 }, // 6v11 → vs seed 3
+    { seedHi: 7, seedLo: 10, divMatchIdx: 2 }, // 7v10 → vs seed 2
+    { seedHi: 8, seedLo: 9,  divMatchIdx: 0 }, // 8v9  → vs seed 1
   ];
 
-  for (const [idx1, idx2] of wildCardMatchups) {
-    const team1 = qualifiedTeams[idx1];
-    const team2 = qualifiedTeams[idx2];
+  for (const spec of wildCardSpecs) {
+    const t1 = qualifiedTeams[spec.seedHi - 1];
+    const t2 = qualifiedTeams[spec.seedLo - 1];
 
-    if (team1 && team2 && team1.tid !== -1 && team2.tid !== -1) {
-      matchups.push({
-        round: 1,
-        matchupId: matchupId++,
-        team1Tid: team1.tid,
-        team2Tid: team2.tid,
-        team1Seed: idx1 + 1,
-        team2Seed: idx2 + 1,
-        played: false,
-      });
-    }
-  }
+    // If we got padded with TBDs (fewer than 12 real teams) we leave
+    // the matchup out entirely so advanceSingleEliminationRound has
+    // nothing to simulate.
+    if (!t1 || !t2 || t1.tid === -1 || t2.tid === -1) continue;
 
-  // Divisional Round placeholders (Seeds 1-4 + Wild Card winners)
-  for (let i = 0; i < 4; i++) {
     matchups.push({
-      round: 2,
+      round: 1,
       matchupId: matchupId++,
-      team1Tid: -1,
-      team2Tid: -1,
+      team1Tid: t1.tid,
+      team2Tid: t2.tid,
+      team1Seed: spec.seedHi,
+      team2Seed: spec.seedLo,
       played: false,
+      // The wildcard winner always lands in slot 2 of its divisional
+      // matchup, since slot 1 is reserved for the bye seed.
+      winnerTo: { round: 2, matchIdx: spec.divMatchIdx, slot: 2 },
     });
   }
 
-  // Conference Championship placeholders
+  // Round 2 - Divisional. Slots are pre-seeded with 1-4 in team1, and
+  // each matchup advances to a specific conference championship slot.
+  //   div[0] = seed 1, div[1] = seed 4, div[2] = seed 2, div[3] = seed 3
+  //   div[0] + div[1] → conf[0] (top half)
+  //   div[2] + div[3] → conf[1] (bottom half)
+  type DivisionalSpec = {
+    byeSeed: number;
+    confMatchIdx: number;
+    confSlot: 1 | 2;
+  };
+  const divisionalSpecs: DivisionalSpec[] = [
+    { byeSeed: 1, confMatchIdx: 0, confSlot: 1 },
+    { byeSeed: 4, confMatchIdx: 0, confSlot: 2 },
+    { byeSeed: 2, confMatchIdx: 1, confSlot: 1 },
+    { byeSeed: 3, confMatchIdx: 1, confSlot: 2 },
+  ];
+
+  for (const spec of divisionalSpecs) {
+    const byeTeam = qualifiedTeams[spec.byeSeed - 1];
+    matchups.push({
+      round: 2,
+      matchupId: matchupId++,
+      team1Tid: byeTeam && byeTeam.tid !== -1 ? byeTeam.tid : -1,
+      team2Tid: -1,
+      team1Seed: byeTeam && byeTeam.tid !== -1 ? spec.byeSeed : undefined,
+      played: false,
+      winnerTo: { round: 3, matchIdx: spec.confMatchIdx, slot: spec.confSlot },
+    });
+  }
+
+  // Round 3 - Conference championship. Both feed into the final.
   matchups.push({
     round: 3,
     matchupId: matchupId++,
     team1Tid: -1,
     team2Tid: -1,
     played: false,
+    winnerTo: { round: 4, matchIdx: 0, slot: 1 },
   });
   matchups.push({
     round: 3,
@@ -131,9 +194,10 @@ export function generateSingleEliminationBracket(
     team1Tid: -1,
     team2Tid: -1,
     played: false,
+    winnerTo: { round: 4, matchIdx: 0, slot: 2 },
   });
 
-  // Finals placeholder
+  // Round 4 - Final. No winnerTo: its winner becomes bracket.champion.
   matchups.push({
     round: 4,
     matchupId: matchupId++,
@@ -311,58 +375,114 @@ export function simulatePlayoffGame(
 }
 
 /**
- * Advance single elimination bracket by one round
+ * Pure simulator callback used by {@link advanceSingleEliminationRound}.
+ * Returns the winning team id and (optionally) the recorded score.
+ */
+export type SingleElimSimulator = (
+  team1Tid: number,
+  team2Tid: number,
+) => { winner: number; score?: { team1: number; team2: number } };
+
+/**
+ * Advance the single-elimination bracket by one round.
+ *
+ * Behaviour:
+ *  - For every matchup in `bracket.currentRound` that has both teams
+ *    set and is unplayed, calls `simulate(team1, team2)`, records the
+ *    winner/loser/score, and propagates the winner via the matchup's
+ *    `winnerTo` metadata (or sets `bracket.champion` for the final).
+ *  - Skips matchups whose teams are still TBD (`-1`); this covers the
+ *    degraded "fewer than 12 teams" case where wildcards were never
+ *    scheduled.
+ *  - Once a champion has been crowned, returns immediately - making
+ *    repeat calls a no-op.
+ *
+ * The previous implementation had two real bugs:
+ *   1. Round 1 (wildcard) winners advanced via the global `matchupId`
+ *      so floor((id-1)/2) sent multiple winners into the wrong slots
+ *      and left the rest of the divisional round stuck at -1.
+ *   2. Seeds 1-4 were never written into the divisional round at all,
+ *      so even when round 1 advancement worked the bye seeds vanished.
+ *
+ * Both are fixed by the new {@link PlayoffMatchup.winnerTo} field set
+ * up at bracket-generation time.
  */
 export function advanceSingleEliminationRound(
+  bracket: PlayoffBracket,
+  simulate: SingleElimSimulator,
+): void {
+  if (bracket.champion !== undefined) return;
+
+  const currentRoundMatchups = bracket.matchups.filter(
+    m => m.round === bracket.currentRound,
+  );
+  if (currentRoundMatchups.length === 0) return;
+
+  for (const matchup of currentRoundMatchups) {
+    if (matchup.played) continue;
+    if (matchup.team1Tid === -1 || matchup.team2Tid === -1) continue;
+
+    const result = simulate(matchup.team1Tid, matchup.team2Tid);
+
+    matchup.winner = result.winner;
+    matchup.loser =
+      result.winner === matchup.team1Tid ? matchup.team2Tid : matchup.team1Tid;
+    if (result.score) matchup.score = result.score;
+    matchup.played = true;
+
+    if (matchup.winnerTo) {
+      const { round: nextRound, matchIdx, slot } = matchup.winnerTo;
+      const nextRoundMatchups = bracket.matchups.filter(
+        m => m.round === nextRound,
+      );
+      const target = nextRoundMatchups[matchIdx];
+      if (target) {
+        if (slot === 1) target.team1Tid = result.winner;
+        else target.team2Tid = result.winner;
+      }
+    } else {
+      // No winnerTo => this is the championship matchup.
+      bracket.champion = result.winner;
+    }
+  }
+
+  // Advance round only if every matchup in this round is either played
+  // or perma-blocked (TBD slot from a degraded layout).
+  const allDone = currentRoundMatchups.every(
+    m => m.played || m.team1Tid === -1 || m.team2Tid === -1,
+  );
+  if (allDone) bracket.currentRound++;
+}
+
+/**
+ * Production adapter: drives single-elim using the project's GameSim.
+ * Wraps {@link simulatePlayoffGame} so callers can keep passing the
+ * roster + season + stats manager triple instead of constructing a
+ * simulator callback themselves.
+ */
+export function advanceSingleEliminationRoundWithGameSim(
   bracket: PlayoffBracket,
   allPlayers: any[],
   season: number,
   statsManager?: StatsManager,
 ): void {
-  const currentRoundMatchups = bracket.matchups.filter(m => m.round === bracket.currentRound);
-
-  for (const matchup of currentRoundMatchups) {
-    if (matchup.played || matchup.team1Tid === -1 || matchup.team2Tid === -1) continue;
-
-    const team1 = bracket.teams.find(t => t.tid === matchup.team1Tid);
-    const team2 = bracket.teams.find(t => t.tid === matchup.team2Tid);
-
-    if (!team1 || !team2) continue;
-
-    const result = simulatePlayoffGame(team1, team2, allPlayers, season, statsManager);
-
-    matchup.winner = result.winner;
-    matchup.loser = result.loser;
-    matchup.score = result.score;
-    matchup.played = true;
-
-    // Advance winner to next round
-    const nextRoundMatchups = bracket.matchups.filter(m => m.round === bracket.currentRound + 1);
-
-    if (nextRoundMatchups.length > 0) {
-      // Find appropriate next matchup
-      const nextMatchupIdx = Math.floor((matchup.matchupId - 1) / 2);
-      const nextMatchup = nextRoundMatchups[nextMatchupIdx];
-
-      if (nextMatchup) {
-        if (nextMatchup.team1Tid === -1) {
-          nextMatchup.team1Tid = result.winner;
-        } else {
-          nextMatchup.team2Tid = result.winner;
-        }
-      }
+  advanceSingleEliminationRound(bracket, (t1Tid, t2Tid) => {
+    const team1 = bracket.teams.find(t => t.tid === t1Tid);
+    const team2 = bracket.teams.find(t => t.tid === t2Tid);
+    if (!team1 || !team2) {
+      // Shouldn't happen - we already filtered TBD slots upstream -
+      // but keep the signature total. Default to team1 advancing.
+      return { winner: t1Tid };
     }
-
-    // Check for champion
-    if (bracket.currentRound === 4) {
-      bracket.champion = result.winner;
-    }
-  }
-
-  // Move to next round if all current matchups are played
-  if (currentRoundMatchups.every(m => m.played || m.team1Tid === -1 || m.team2Tid === -1)) {
-    bracket.currentRound++;
-  }
+    const result = simulatePlayoffGame(
+      team1,
+      team2,
+      allPlayers,
+      season,
+      statsManager,
+    );
+    return { winner: result.winner, score: result.score };
+  });
 }
 
 /**
