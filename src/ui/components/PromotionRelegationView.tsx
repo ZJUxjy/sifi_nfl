@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Card, Table, Badge, Tabs, Tab, Alert, Row, Col, Button } from 'react-bootstrap';
-import { useGameStore, useUserTeam } from '../stores/gameStore';
+import { useUserTeam } from '../stores/gameStore';
+import { useSeason, useTeams, usePhase } from '../stores/selectors';
 import { getGameEngine } from '../../worker/api';
 import type { Region } from '@common/types';
 
@@ -11,7 +12,9 @@ interface PromotionRelegationViewProps {
 type RegionKey = 'miningIsland' | 'originContinent';
 
 function PromotionRelegationView({}: PromotionRelegationViewProps) {
-  const { season, teams, phase } = useGameStore();
+  const season = useSeason();
+  const teams = useTeams();
+  const phase = usePhase();
   const userTeam = useUserTeam();
   const engine = getGameEngine();
   const [activeRegion, setActiveRegion] = useState<RegionKey>(

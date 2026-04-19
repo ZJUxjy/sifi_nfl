@@ -11,7 +11,7 @@ import {
   Col,
   Accordion,
 } from 'react-bootstrap';
-import { useGameStore } from '../stores/gameStore';
+import { useSeason, useTeams, useSyncState } from '../stores/selectors';
 import { getGameEngine } from '../../worker/api';
 import type { OffseasonResult, OffseasonEvent } from '../../worker/api/types';
 
@@ -20,7 +20,9 @@ interface OffseasonViewProps {
 }
 
 function OffseasonView({ onSeasonAdvanced }: OffseasonViewProps) {
-  const { season, teams, syncState } = useGameStore();
+  const season = useSeason();
+  const teams = useTeams();
+  const syncState = useSyncState();
   const engine = getGameEngine();
 
   const [isProcessing, setIsProcessing] = useState(false);

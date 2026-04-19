@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Table, Badge, Button, Modal, Alert } from 'react-bootstrap';
-import { useGameStore } from '../stores/gameStore';
+import { useTeams, usePlayers, useSimWeek } from '../stores/selectors';
 import { getGameEngine } from '../../worker/api';
 import type { Team } from '@common/entities';
 import type { ScheduleGame } from '../../worker/api/types';
@@ -29,7 +29,9 @@ interface DisplayScheduleGame {
 }
 
 function ScheduleView({ team }: ScheduleViewProps) {
-  const { teams, players, simWeek } = useGameStore();
+  const teams = useTeams();
+  const players = usePlayers();
+  const simWeek = useSimWeek();
   const engine = getGameEngine();
 
   const currentWeek = engine.getState().week;

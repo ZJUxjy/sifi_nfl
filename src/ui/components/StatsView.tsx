@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Table, Card, Tabs, Tab, Badge, Form, Row, Col } from 'react-bootstrap';
-import { useGameStore } from '../stores/gameStore';
+import { useSeason, useTeams, usePlayers } from '../stores/selectors';
 import { getGameEngine } from '../../worker/api';
 import type { PlayerSeasonStats } from '@common/stats';
 import type { Position } from '@common/types';
@@ -85,7 +85,9 @@ function getNestedValue(obj: any, path: string): number {
 }
 
 function StatsView() {
-  const { season, teams, players } = useGameStore();
+  const season = useSeason();
+  const teams = useTeams();
+  const players = usePlayers();
   const [category, setCategory] = useState<StatCategory>('passing');
   const [teamFilter, setTeamFilter] = useState<number | 'all'>('all');
   const [positionFilter, setPositionFilter] = useState<Position | 'all'>('all');

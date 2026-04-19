@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Table, Badge } from 'react-bootstrap';
-import { useGameStore } from '../stores/gameStore';
+import { useTeams } from '../stores/selectors';
 import { getGameEngine } from '../../worker/api';
 import type { Team } from '@common/entities';
 import type { StandingEntry } from '../../worker/api/types';
@@ -10,7 +10,7 @@ interface StandingsViewProps {
 }
 
 function StandingsView({ team }: StandingsViewProps) {
-  const { teams } = useGameStore();
+  const teams = useTeams();
   const engine = getGameEngine();
 
   // Get standings from GameEngine

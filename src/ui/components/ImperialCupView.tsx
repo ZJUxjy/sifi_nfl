@@ -9,7 +9,7 @@ import {
   Table,
   Modal,
 } from 'react-bootstrap';
-import { useGameStore } from '../stores/gameStore';
+import { useSeason, useTeams, useSyncState } from '../stores/selectors';
 import {
   getGameEngine,
   getImperialCupRoundName as getRoundName,
@@ -28,7 +28,9 @@ interface ImperialCupViewProps {
 }
 
 function ImperialCupView({ team }: ImperialCupViewProps) {
-  const { season, teams, syncState } = useGameStore();
+  const season = useSeason();
+  const teams = useTeams();
+  const syncState = useSyncState();
   const engine = getGameEngine();
 
   const [imperialCup, setImperialCup] = useState<ImperialCupSeason | null>(null);

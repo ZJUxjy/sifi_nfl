@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Card, Table, Button, Badge, Tabs, Tab, Alert, Row, Col } from 'react-bootstrap';
-import { useGameStore } from '../stores/gameStore';
+import { useSeason, useTeams, usePhase } from '../stores/selectors';
 import { getGameEngine } from '../../worker/api';
 import type { Team } from '@common/entities';
 import type { PlayoffBracket, PlayoffMatchup } from '../../worker/api/types';
@@ -12,7 +12,9 @@ interface PlayoffsViewProps {
 type RegionKey = 'firstContinent' | 'secondContinent' | 'originContinent' | 'miningIsland';
 
 function PlayoffsView({}: PlayoffsViewProps) {
-  const { season, teams, phase } = useGameStore();
+  const season = useSeason();
+  const teams = useTeams();
+  const phase = usePhase();
   const engine = getGameEngine();
   const [activeRegion, setActiveRegion] = useState<RegionKey>('firstContinent');
   const [brackets, setBrackets] = useState<Map<RegionKey, PlayoffBracket>>(new Map());

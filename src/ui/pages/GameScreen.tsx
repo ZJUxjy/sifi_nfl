@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Row, Col, Nav, Tab, Badge, Button, ButtonGroup } from 'react-bootstrap';
-import { useGameStore, useUserTeam } from '../stores/gameStore';
+import { useUserTeam } from '../stores/gameStore';
+import { useSeason, useWeek, usePlayers } from '../stores/selectors';
 import RosterView from '../components/RosterView';
 import StandingsView from '../components/StandingsView';
 import ScheduleView from '../components/ScheduleView';
@@ -23,7 +24,9 @@ interface GameScreenProps {
 type TabKey = 'roster' | 'schedule' | 'standings' | 'stats' | 'finances' | 'trade' | 'freeAgency' | 'draft' | 'originDraft' | 'playoffs' | 'imperialCup' | 'promoReleg' | 'offseason';
 
 function GameScreen({ onBack }: GameScreenProps) {
-  const { season, week, players } = useGameStore();
+  const season = useSeason();
+  const week = useWeek();
+  const players = usePlayers();
   const currentTeam = useUserTeam();
   const [activeTab, setActiveTab] = useState<TabKey>('roster');
   const [showSaveModal, setShowSaveModal] = useState(false);
