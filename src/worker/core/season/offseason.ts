@@ -37,6 +37,23 @@ function createContract(amount: number, years: number, season: number): Contract
   };
 }
 
+/**
+ * Compute a player's state for the *next* season. Source of truth is
+ * `bornYear` (immutable across seasons); `age` is derived from
+ * `newSeason - bornYear`.
+ *
+ * Previously processAging incremented `age` *and* decremented
+ * `bornYear`, so a 25yo in 2026 with bornYear 2001 became a 26yo with
+ * bornYear 2000 - effectively aged 2 years per offseason and broke
+ * every downstream computation that compared `season - bornYear`.
+ */
+export function ageOnePlayer<T extends { age: number; bornYear: number }>(
+  p: T,
+  newSeason: number
+): T {
+  return { ...p, age: newSeason - p.bornYear };
+}
+
 // Roster limits
 const MIN_ROSTER_SIZE = 25;
 const MAX_ROSTER_SIZE = 53;
@@ -203,17 +220,20 @@ export class OffseasonManager {
   private processAging(): void {
     console.log('Processing player aging...');
 
-    for (const player of this.players) {
-      // Age the player
-      player.age += 1;
-      player.bornYear -= 1; // Adjust born year
+    const newSeason = this.season + 1;
+    for (let i = 0; i < this.players.length; i++) {
+      const aged = ageOnePlayer(this.players[i], newSeason);
+      // Preserve identity for downstream consumers that hold references
+      // to player objects from this list - apply in-place.
+      this.players[i].age = aged.age;
+      // bornYear intentionally left unchanged.
 
-      // Develop skills based on age and potential
+      const player = this.players[i];
+
       develop(player, 1);
 
-      // Process injury recovery
       if (player.injury) {
-        player.injury.gamesRemaining -= 17; // Full season passed
+        player.injury.gamesRemaining -= 17;
         if (player.injury.gamesRemaining <= 0) {
           player.injury = undefined;
         }
