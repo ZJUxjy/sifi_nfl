@@ -13,6 +13,7 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import reactPlugin from 'eslint-plugin-react';
+import reactHooksPlugin from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
   {
@@ -70,7 +71,7 @@ export default tseslint.config(
   },
   {
     files: ['src/ui/**/*.{ts,tsx}'],
-    plugins: { react: reactPlugin },
+    plugins: { react: reactPlugin, 'react-hooks': reactHooksPlugin },
     languageOptions: {
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
@@ -81,6 +82,12 @@ export default tseslint.config(
       // Baseline UI uses literal quotes inside JSX text. Warn for now
       // and promote to 'error' once the existing strings are escaped.
       'react/no-unescaped-entities': 'warn',
+      // React Hooks correctness. `rules-of-hooks` is structural and
+      // should always be an error; `exhaustive-deps` is a warning so
+      // that pre-existing useMemo/useEffect drift surfaces as
+      // follow-up work without breaking the lint pipeline today.
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
     },
     settings: { react: { version: 'detect' } },
   },
