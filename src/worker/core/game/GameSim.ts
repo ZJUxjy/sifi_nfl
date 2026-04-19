@@ -579,7 +579,14 @@ export class GameSim {
   doFieldGoal(): void {
     const kicker = this.getPlayer(this.o, 'K');
     const distance = Math.round(100 - this.scrimmage + FIELD_GOAL_DISTANCE_ADDED);
-    
+
+    // Block check rolls BEFORE the make/miss roll because a blocked kick
+    // never gets airborne — it short-circuits the entire scoring path
+    // and routes through the defensive recovery branch below. Tests pin
+    // Math.random() to a sequence and rely on this ordering, so it must
+    // stay first to keep the random-call signature predictable.
+    if (this.tryBlockKick('fg')) return;
+
     const baseProb = 0.95 - (distance - 20) * 0.015;
     const kickerBonus = (kicker.compositeRating.kpw + kicker.compositeRating.kac - 100) * 0.002;
     const makeProb = bound(baseProb + kickerBonus, 0.1, 0.98);
@@ -615,6 +622,11 @@ export class GameSim {
 
   doPunt(): void {
     const punter = this.getPlayer(this.o, 'P');
+
+    // See doFieldGoal — the block check must come first so the random
+    // sequence pinned by tests starts at the block roll.
+    if (this.tryBlockKick('punt')) return;
+
     const distance = truncGauss(42 + (punter.compositeRating.ppw - 50) * 0.2, 5, 30, 65);
     
     this.scrimmage += Math.round(distance);
@@ -883,6 +895,100 @@ export class GameSim {
   scoreDefensiveTouchdown(_returner: PlayerGameSim): void {
     [this.o, this.d] = [this.d, this.o];
     this.scoreTouchdown();
+  }
+
+  /**
+   * Roll for — and resolve — a blocked field goal or punt.
+   *
+   * Returns `true` if the kick was blocked (and the caller should
+   * short-circuit its normal flow); `false` otherwise (caller continues
+   * with the make/miss or punt distance code path).
+   *
+   * Probability design:
+   *   - FG block rate: 3% baseline (NFL real-world is ~2-4%; staying
+   *     inside that band keeps season totals plausible).
+   *   - Punt block rate: 1.5% (NFL real-world ~1-2%).
+   *   - Conditional on a block, return-TD probability is 30% for FG
+   *     (loose ball at the line of scrimmage with a clear field) and
+   *     20% for punts (lower because a typical punt formation is from
+   *     own-30, putting the loose ball ~70 yards from the end zone).
+   *   - Non-TD blocks fall through to `possessionChange()` so the
+   *     existing turnover-on-downs path keeps working — defense takes
+   *     over at the spot of the kick.
+   *
+   * Random call ordering is significant: this helper pulls EXACTLY two
+   * Math.random()s on a block (`block`, then `returnTD`) and EXACTLY
+   * one on a non-block (`block`). Tests in
+   * src/test/gamesim.blockedKick.test.ts pin Math.random to a fixed
+   * sequence on the assumption of this signature.
+   */
+  tryBlockKick(kind: 'fg' | 'punt'): boolean {
+    const blockProb = kind === 'fg' ? 0.03 : 0.015;
+    if (Math.random() >= blockProb) return false;
+
+    const returnTDProb = kind === 'fg' ? 0.30 : 0.20;
+    const isReturnTD = Math.random() < returnTDProb;
+
+    // Pick a returner from the standard back-seven; fall back to any
+    // available defender so a malformed roster (e.g. no LBs) can't crash
+    // the sim. Mirrors the defender-fallback in doPass / doRun.
+    const returners = this.getPlayers(this.d, ['CB', 'S', 'LB']);
+    const returner =
+      (returners.length > 0 ? choice(returners) : undefined) ??
+      this.team[this.d].player[0];
+
+    if (kind === 'fg') {
+      const kicker = this.getPlayer(this.o, 'K');
+      const distance = Math.round(100 - this.scrimmage + FIELD_GOAL_DISTANCE_ADDED);
+      // Still log a fieldGoal event so existing consumers see the
+      // attempt; `blocked: true` lets new consumers distinguish it
+      // from a regular miss without breaking the older `made` shape.
+      this.playByPlayLogger.logEvent({
+        type: 'fieldGoal',
+        clock: this.clock,
+        made: false,
+        blocked: true,
+        names: [kicker.name],
+        t: this.o,
+        yds: distance,
+      });
+      this.recordStat(this.o, kicker, 'fga');
+    } else {
+      const punter = this.getPlayer(this.o, 'P');
+      this.playByPlayLogger.logEvent({
+        type: 'punt',
+        clock: this.clock,
+        names: [punter.name],
+        t: this.o,
+        yds: 0,
+        touchback: false,
+        blocked: true,
+      });
+      this.recordStat(this.o, punter, 'pnt');
+    }
+
+    if (isReturnTD) {
+      // Modest return distance — most blocked-kick TDs are picked up
+      // close to the line of scrimmage. truncGauss() pulls from the
+      // seeded PRNG (NOT Math.random) so it doesn't disturb the
+      // sequence pinned by tests.
+      const returnYds = Math.round(truncGauss(15, 8, 0, 60));
+      this.playByPlayLogger.logEvent({
+        type: kind === 'fg' ? 'blockedFieldGoalReturnTD' : 'blockedPuntReturnTD',
+        clock: this.clock,
+        names: [returner.name],
+        pid: returner.pid,
+        t: this.d,
+        yds: returnYds,
+      });
+      this.scoreDefensiveTouchdown(returner);
+    } else {
+      // Defense recovers but does not score; flip possession at the
+      // spot. The kick never traveled, so scrimmage is still at the
+      // original line; possessionChange() inverts it as usual.
+      this.possessionChange();
+    }
+    return true;
   }
 
   scoreSafety(): void {

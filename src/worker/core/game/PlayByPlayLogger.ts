@@ -42,6 +42,10 @@ export type ScoringEventInput =
       names: string[];
       t: TeamNum;
       yds: number;
+      // Optional: a block aborts the kick before make/miss is decided,
+      // so blocked attempts always log `made: false, blocked: true`.
+      // Older consumers that just check `made` keep working unchanged.
+      blocked?: boolean;
     }
   | {
       type: 'extraPoint';
@@ -106,6 +110,28 @@ export type ScoringEventInput =
       pid: number;
       t: TeamNum;
       yds: number;
+    }
+  // Blocked-kick return touchdowns. Symmetric with pickSix / fumbleSix:
+  // the kicking-team event (`fieldGoal` or `punt`) carries `blocked: true`
+  // so consumers that don't care about the return can short-circuit on
+  // the kick event alone, while these dedicated events let leader boards
+  // and play-by-play UIs surface the score-changing return without
+  // pattern-matching on the kick event.
+  | {
+      type: 'blockedFieldGoalReturnTD';
+      clock: number;
+      names: string[];
+      pid: number;
+      t: TeamNum;
+      yds: number;
+    }
+  | {
+      type: 'blockedPuntReturnTD';
+      clock: number;
+      names: string[];
+      pid: number;
+      t: TeamNum;
+      yds: number;
     };
 
 export type PlayByPlayEventInput =
@@ -140,6 +166,10 @@ export type PlayByPlayEventInput =
       t: TeamNum;
       touchback: boolean;
       yds: number;
+      // A blocked punt is a 0-yard kick that immediately becomes a
+      // turnover (or, on a return TD, a defensive score). Flag is
+      // optional so existing consumers keep working.
+      blocked?: boolean;
     }
   | {
       type: 'passIncomplete';
@@ -268,6 +298,8 @@ class PlayByPlayLogger {
       'fumble',
       'pickSix',
       'fumbleSix',
+      'blockedFieldGoalReturnTD',
+      'blockedPuntReturnTD',
     ];
     return scoringTypes.includes(event.type);
   }
@@ -360,6 +392,12 @@ class PlayByPlayLogger {
         break;
       case 'fumbleSix':
         parts.push(`FUMBLE SIX! ${event.names[0]} returns fumble ${event.yds} yards for a TD`);
+        break;
+      case 'blockedFieldGoalReturnTD':
+        parts.push(`BLOCKED FG RETURN! ${event.names[0]} returns the block ${event.yds} yards for a TD`);
+        break;
+      case 'blockedPuntReturnTD':
+        parts.push(`BLOCKED PUNT RETURN! ${event.names[0]} returns the block ${event.yds} yards for a TD`);
         break;
       case 'kneel':
         parts.push(`${event.names[0]} kneels for -${Math.abs(event.yds)} yards`);
