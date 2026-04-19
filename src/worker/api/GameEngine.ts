@@ -371,6 +371,24 @@ export class GameEngine {
   }
 
   getFreeAgents(): Player[] {
+    // FL3: contract-level guarantee — at any read time the exposed FA
+    // pool must match `state.players.filter(tid undefined/<0)`. Loud
+    // dev-mode warning if the two ever diverge again so future regressions
+    // are caught at the boundary rather than via UI staleness reports.
+    if (
+      typeof process !== 'undefined' &&
+      process.env &&
+      process.env.NODE_ENV === 'development'
+    ) {
+      const derived = this.state.players.filter(
+        p => p.tid === undefined || p.tid < 0
+      );
+      if (derived.length !== this.state.freeAgents.length) {
+        console.warn(
+          `[GameEngine] state.freeAgents drifted from players: ${this.state.freeAgents.length} vs ${derived.length}`
+        );
+      }
+    }
     return this.state.freeAgents;
   }
 
@@ -981,6 +999,21 @@ export class GameEngine {
     try {
       const { OffseasonManager } = await import('../core/season/offseason');
 
+      // FL3: state.freeAgents is seeded by generateFreeAgentPool at
+      // newGame() time as a *separate* list from state.players (which
+      // generateAllTeams populates with rostered players only). The
+      // offseason pipeline only knows about state.players, so any FA
+      // sitting in state.freeAgents but not in state.players would
+      // silently fall off the canonical roster. Merge by pid before
+      // running the offseason so contract / re-sign / fill-roster
+      // logic sees the full pool.
+      const knownPids = new Set(this.state.players.map(p => p.pid));
+      for (const fa of this.state.freeAgents) {
+        if (!knownPids.has(fa.pid)) {
+          this.state.players.push(fa);
+        }
+      }
+
       const offseasonManager = new OffseasonManager(
         this.state.players,
         this.state.teams,
@@ -995,6 +1028,14 @@ export class GameEngine {
       this.state.season = result.newSeason;
       this.state.week = 1;
       this.state.phase = 2; // Regular season
+
+      // FL3: rebuild state.freeAgents from the canonical players list
+      // so getFreeAgents() and `players.filter(tid undefined/<0)` always
+      // agree (FreeAgencyView reads getFreeAgents() and would otherwise
+      // render last season's stale pool indefinitely).
+      this.state.freeAgents = this.state.players.filter(
+        p => p.tid === undefined || p.tid < 0
+      );
 
       // Reinitialize draft picks for new season
       this.initializeDraftPicks();
