@@ -92,7 +92,7 @@ export interface LeagueDB extends DBSchema {
     key: number;
     value: TeamStats;
     indexes: {
-      'byPlayoffsTid': [boolean, number];
+      'byPlayoffsTid': [number, number];
     };
   };
   seasonLeaders: {

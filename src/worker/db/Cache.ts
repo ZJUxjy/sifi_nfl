@@ -272,7 +272,7 @@ export class Cache {
     if (indexKey === 'byDraftYearRetiredYear') return [record.draft?.year, record.retiredYear];
     if (indexKey === 'bySeasonTid') return [record.season, record.tid];
     if (indexKey === 'byTidSeason') return [record.tid, record.season];
-    if (indexKey === 'byPlayoffsTid') return [record.playoffs, record.tid];
+    if (indexKey === 'byPlayoffsTid') return [record.playoffs ? 1 : 0, record.tid];
     return record[indexKey];
   }
 
@@ -283,9 +283,9 @@ export class Cache {
     return a === b;
   }
 
-  async add<T extends { id?: number }>(store: Store, obj: Omit<T, 'id'> & Partial<{ id: number }>): Promise<number> {
+  async add<T extends object>(store: Store, obj: Partial<T>): Promise<number> {
     const pk = ++this._maxIds[store];
-    const record = { ...obj, [this._getIdField(store)]: pk } as T;
+    const record = { ...obj, [this._getIdField(store)]: pk } as unknown as T;
     this._data[store].set(pk, record);
     this._markDirty(store, pk);
     return pk;
