@@ -16,7 +16,7 @@ import {
 } from '../worker/api';
 import type { Team, Player } from '@common/entities';
 import type { Region } from '@common/types';
-import { listSaves, saveGame, loadGame, formatDate, type SaveData } from './saveManager';
+import { formatDate } from './saveManager';
 import chalk from 'chalk';
 import Table from 'cli-table3';
 import inquirer from 'inquirer';
@@ -202,7 +202,10 @@ class SIFINFLGame {
       name: 'saveId',
       message: 'Select a save to load:',
       choices: saves.map(s => ({
-        name: `${s.name} - ${formatDate(s.timestamp)}`,
+        // FL7: post-fix saves carry an ISO `savedAt`; pre-FL7 saves
+        // still living in IDB only have the legacy numeric `timestamp`.
+        // Accept either so users with old saves keep readable labels.
+        name: `${s.name} - ${formatDate(s.savedAt ?? s.timestamp)}`,
         value: s.name
       }))
     }]);

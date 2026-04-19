@@ -78,8 +78,16 @@ import type {
 import type { Team, Player } from '@common/entities';
 import type { Region } from '@common/types';
 import { REGION_LEAGUE_STRUCTURE } from '@common/constants.football';
+import {
+  serializeSave,
+  validateSave,
+  CURRENT_SAVE_SCHEMA_VERSION,
+} from '@common/saveSchema';
 
-const GAME_VERSION = '0.2.0';
+// Re-export so consumers can read the version without grabbing the
+// shared module directly. Also documents that GameEngine and
+// cli/saveManager pin the same on-disk / on-IDB version.
+export { CURRENT_SAVE_SCHEMA_VERSION };
 
 export class GameEngine {
   private state: GameState;
@@ -254,20 +262,22 @@ export class GameEngine {
   }
 
   // === Save/Load ===
+  // Both saveGame and loadGame route through `@common/saveSchema` so
+  // the UI (IDB) path and the CLI (`cli/saveManager`) path share a
+  // single zod-validated envelope. See FL7 in
+  // `docs/plans/2026-04-19-review-fixlist.md`.
   async saveGame(name?: string): Promise<string> {
     const saveName = name || `Save_${this.state.season}_Week${this.state.week}`;
-    const saveData = {
-      version: GAME_VERSION,
-      timestamp: Date.now(),
-      name: saveName,
+    // FL5: persist the per-engine StatsManager (otherwise season
+    // pass/rush/recv totals silently reset to zero on reload).
+    // FL7: serializeSave validates BEFORE we hand the blob to the
+    // storage layer so the engine never writes a save that it
+    // wouldn't itself accept on reload.
+    const saveData = serializeSave({
       state: this.state,
-      // FL5: persist the per-engine StatsManager. Without this the
-      // accumulator was silently dropped on reload — the season's
-      // pass/rush/recv totals reset to zero on every load. Snapshot is
-      // intentionally a plain JSON-safe shape so it survives both the
-      // node JSON.stringify branch below and IDB's structured clone.
       stats: this.statsManager ? this.statsManager.export() : null,
-    };
+      name: saveName,
+    });
 
     if (typeof window !== 'undefined') {
       await idbSaveGame(saveName, saveData);
@@ -279,19 +289,27 @@ export class GameEngine {
   }
 
   async loadGame(saveIdOrData: string): Promise<void> {
-    let saveData: any;
+    let raw: unknown;
 
     if (typeof window !== 'undefined') {
-      saveData = await idbLoadGame(saveIdOrData);
-      if (!saveData) {
+      raw = await idbLoadGame(saveIdOrData);
+      if (!raw) {
         throw new Error(`Save not found: ${saveIdOrData}`);
       }
     } else {
-      saveData = JSON.parse(saveIdOrData);
+      raw = JSON.parse(saveIdOrData);
     }
 
-    // Restore state
-    this.state = saveData.state;
+    // FL7: always run validateSave so a bad / partial / future-version
+    // / hand-edited save can never replace the in-memory engine state.
+    // migrateSave() upgrades pre-FL7 saves (no schemaVersion / no
+    // savedAt / no stats) so legacy IDB content still loads.
+    const saveData = validateSave(raw);
+
+    // Restore state. The cast is safe because saveSchema enforces the
+    // GameState field set above; the inner array element types are
+    // intentionally left loose at the schema level.
+    this.state = saveData.state as unknown as GameState;
 
     // Rebuild season manager
     if (this.state.teams.length > 0) {
@@ -306,11 +324,11 @@ export class GameEngine {
     // for the same season — that's the cross-save leak the brief calls
     // out, orthogonal to the P2/D1 instance-isolation fix. Construct
     // first, then optionally hydrate from the snapshot if present.
-    // Old saves with no `stats` field fall through to an empty manager,
-    // which is the expected backward-compat behaviour.
+    // Old saves with no `stats` field have it normalised to `null` by
+    // migrateSave() and fall through to an empty manager.
     this.statsManager = new StatsManager(this.state.season);
     if (saveData.stats) {
-      this.statsManager.import(saveData.stats);
+      this.statsManager.import(saveData.stats as Parameters<StatsManager['import']>[0]);
     }
   }
 
