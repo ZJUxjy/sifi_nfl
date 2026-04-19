@@ -113,6 +113,7 @@ export const REGION_LEAGUE_STRUCTURE = {
     relegationSpots: MINING_ISLAND_PROMOTION_RELEGATION,
     salaryCap: 50000000,         // $50M salary cap (smaller market)
     minPayroll: 30000000,        // $30M floor
+    luxuryPayroll: null,         // No luxury tax in mining island
     minContract: 300000,         // $300K minimum
     maxContract: 15000000,       // $15M max
     minRosterSize: 25,

@@ -77,6 +77,7 @@ import type {
 } from './types';
 import type { Team, Player } from '@common/entities';
 import type { Region } from '@common/types';
+import { REGION_LEAGUE_STRUCTURE } from '@common/constants.football';
 
 const GAME_VERSION = '0.2.0';
 
@@ -770,11 +771,13 @@ export class GameEngine {
 
     const profit = revenue.total - expenses.total;
 
+    const cap = REGION_LEAGUE_STRUCTURE[team.region]?.salaryCap ?? 180_000_000;
+
     return {
       budget: team.budget,
       cash: team.budget,
       payroll,
-      capSpace: Math.max(0, (team.salaryCap || 180000000) - payroll),
+      capSpace: Math.max(0, cap - payroll),
       revenue,
       expenses,
       profit,
