@@ -949,7 +949,11 @@ export class GameSim {
   finalizeGame(): Game {
     const game: Game = {
       gid: this.id,
-      season: 2025,
+      // Use the actual game season from construction. The previous
+      // hardcoded `2025` made every saved game look like it happened
+      // in 2025 regardless of the in-game year, which broke playoff
+      // round attribution, season totals, and HOF voting.
+      season: this.season,
       day: this.day,
       teams: [
         {
