@@ -12,7 +12,7 @@
 
 import { execSync } from 'node:child_process';
 
-const MIN_NODE_MAJOR = 20;
+const MIN_NODE_MAJOR = 22;
 
 function fail(msg: string): never {
   console.error(`pre-test: ${msg}`);
