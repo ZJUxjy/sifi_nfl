@@ -10,20 +10,17 @@ import {
   Modal,
 } from 'react-bootstrap';
 import { useGameStore } from '../stores/gameStore';
-import { getGameEngine } from '../../worker/api';
 import {
-  isImperialCupYear,
-  getNextImperialCupYear,
-  qualifyForImperialCup,
-  generateImperialCupBracket,
-  getRoundName,
-  advanceRound,
+  getGameEngine,
+  getImperialCupRoundName as getRoundName,
   IMPERIAL_CUP_HISTORY,
   IMPERIAL_CUP_QUALIFYING,
-  type ImperialCupMatch,
-  type ImperialCupSeason,
-  type ImperialCupRound,
-} from '@worker/core/imperialCup';
+} from '../../worker/api';
+import type {
+  ImperialCupMatch,
+  ImperialCupSeason,
+  ImperialCupRound,
+} from '../../worker/api/types';
 import type { Team } from '@common/entities';
 
 interface ImperialCupViewProps {
@@ -38,23 +35,16 @@ function ImperialCupView({ team }: ImperialCupViewProps) {
   const [showMatchModal, setShowMatchModal] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<ImperialCupMatch | null>(null);
 
-  const isCupYear = isImperialCupYear(season);
-  const nextCupYear = getNextImperialCupYear(season);
-
-  // Get standings for qualification
-  const standings = useMemo(() => {
-    return engine.getStandings();
-  }, [engine]);
+  const isCupYear = engine.isImperialCupYear(season);
+  const nextCupYear = engine.getNextImperialCupYear(season);
 
   // Initialize or get imperial cup
   const currentImperialCup = useMemo(() => {
     if (!isCupYear) return null;
 
-    // Check if we already have imperial cup data in engine state
-    // For now, we'll generate it on the fly
     if (!imperialCup) {
-      const qualified = qualifyForImperialCup(teams, standings);
-      const matches = generateImperialCupBracket(qualified);
+      const qualified = engine.qualifyForImperialCup();
+      const matches = engine.generateImperialCupBracket(qualified);
       return {
         season,
         qualifiedTeams: qualified,
@@ -64,7 +54,7 @@ function ImperialCupView({ team }: ImperialCupViewProps) {
     }
 
     return imperialCup;
-  }, [isCupYear, season, teams, standings, imperialCup]);
+  }, [isCupYear, season, teams, engine, imperialCup]);
 
   // Get team's participation status
   const teamStatus = useMemo(() => {
@@ -134,7 +124,7 @@ function ImperialCupView({ team }: ImperialCupViewProps) {
 
     if (roundComplete) {
       // Advance to next round
-      const nextRoundMatches = advanceRound(currentImperialCup!.matches);
+      const nextRoundMatches = engine.advanceImperialCupRound(currentImperialCup!.matches);
       if (nextRoundMatches) {
         currentImperialCup!.matches.push(...nextRoundMatches);
       } else if (match.round === 'final') {
@@ -165,7 +155,7 @@ function ImperialCupView({ team }: ImperialCupViewProps) {
       }
 
       // Try to advance
-      const nextRoundMatches = advanceRound(matches);
+      const nextRoundMatches = engine.advanceImperialCupRound(matches);
       if (nextRoundMatches) {
         currentImperialCup.matches.push(...nextRoundMatches);
         matches = nextRoundMatches;

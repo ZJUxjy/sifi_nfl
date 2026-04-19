@@ -13,12 +13,7 @@ import {
 } from 'react-bootstrap';
 import { useGameStore } from '../stores/gameStore';
 import { getGameEngine } from '../../worker/api';
-import {
-  generateDraftPool,
-  calculateDraftOrder,
-  selectPlayer,
-  type DraftProspect,
-} from '@worker/core/draft';
+import type { DraftProspectInternal as DraftProspect } from '../../worker/api/types';
 import type { Team, Player } from '@common/entities';
 
 interface DraftRoomProps {
@@ -82,20 +77,9 @@ function DraftRoom({ team, onDraftComplete }: DraftRoomProps) {
       return;
     }
 
-    // Only include teams from the same region
-    const regionTeams = teams.filter(t => t.region === team.region);
-
-    const order = calculateDraftOrder(
-      regionTeams.map(t => ({
-        tid: t.tid,
-        won: 0,
-        lost: 0,
-        region: t.region,
-      })),
-      season
-    );
+    const order = engine.getRegionalDraftOrder(team.region);
     setDraftOrder(order);
-  }, [teams, season, team.region]);
+  }, [teams, season, team.region, engine]);
 
   // Generate draft pool based on number of teams
   useEffect(() => {
@@ -103,7 +87,7 @@ function DraftRoom({ team, onDraftComplete }: DraftRoomProps) {
 
     // Generate enough prospects: 7 rounds × teams × 1.1 (buffer)
     const numProspects = Math.ceil(draftOrder.length * 7 * 1.1);
-    const pool = generateDraftPool(season, numProspects);
+    const pool = engine.generateDraftPool(numProspects);
     setDraftPool(pool);
     setShowDraftModal(true);
   }, [season, draftOrder.length, noDraft]);
@@ -176,7 +160,7 @@ function DraftRoom({ team, onDraftComplete }: DraftRoomProps) {
     };
 
     // Sign the player
-    selectPlayer(team.tid, prospect, pick as any, season);
+    engine.selectDraftedPlayer(team.tid, prospect, pick);
 
     // Add to results
     setDraftResults([...draftResults, { prospect, pick }]);

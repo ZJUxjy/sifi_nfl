@@ -14,20 +14,11 @@ import {
 } from 'react-bootstrap';
 import { useGameStore } from '../stores/gameStore';
 import { getGameEngine } from '../../worker/api';
-import {
-  calculatePlayerValue,
-  calculatePickValue,
-  evaluateTrade,
-  createTradeAsset,
-  proposeTrade,
-  shouldAcceptTrade,
-  executeTrade,
-  isPlayerTradable,
-  type TradeAsset,
-  type TradeProposal,
-} from '@worker/core/trade';
+import type {
+  TradeProposalInternal as TradeProposal,
+  DraftPick,
+} from '../../worker/api/types';
 import type { Team, Player } from '@common/entities';
-import type { DraftPick } from '../../worker/api/types';
 
 interface TradeCenterProps {
   team: Team;
@@ -42,7 +33,7 @@ interface SelectedAsset {
 }
 
 function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
-  const { teams, syncState, season } = useGameStore();
+  const { teams, syncState } = useGameStore();
   const engine = getGameEngine();
 
   const [selectedTeamId, setSelectedTeamId] = useState<number | null>(null);
@@ -127,12 +118,12 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
     const proposal: TradeProposal = {
       fromTeam: team.tid,
       toTeam: selectedTeam.tid,
-      fromAssets: myAssets.map(a => createTradeAsset(a.type, a.data, season)),
-      toAssets: theirAssets.map(a => createTradeAsset(a.type, a.data, season)),
+      fromAssets: myAssets.map(a => engine.buildTradeAsset(a.type, a.data)),
+      toAssets: theirAssets.map(a => engine.buildTradeAsset(a.type, a.data)),
       status: 'pending',
     };
 
-    const evaluation = evaluateTrade(proposal);
+    const evaluation = engine.evaluateAssetTrade(proposal);
     const myTotalValue = myAssets.reduce((sum, a) => sum + a.value, 0);
     const theirTotalValue = theirAssets.reduce((sum, a) => sum + a.value, 0);
 
@@ -153,12 +144,12 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
     const proposal: TradeProposal = {
       fromTeam: team.tid,
       toTeam: selectedTeam.tid,
-      fromAssets: myAssets.map(a => createTradeAsset(a.type, a.data, season)),
-      toAssets: theirAssets.map(a => createTradeAsset(a.type, a.data, season)),
+      fromAssets: myAssets.map(a => engine.buildTradeAsset(a.type, a.data)),
+      toAssets: theirAssets.map(a => engine.buildTradeAsset(a.type, a.data)),
       status: 'pending',
     };
 
-    const accepted = shouldAcceptTrade(proposal, true);
+    const accepted = engine.aiAcceptsTrade(proposal);
 
     setAiResponse({
       accepted,
@@ -177,47 +168,21 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
       return;
     }
 
-    const proposal: TradeProposal = {
-      fromTeam: team.tid,
-      toTeam: selectedTeam.tid,
-      fromAssets: myAssets.map(a => createTradeAsset(a.type, a.data, season)),
-      toAssets: theirAssets.map(a => createTradeAsset(a.type, a.data, season)),
-      status: 'accepted',
-    };
-
-    const allPlayers = engine.getPlayers();
-
-    // Execute trade on players
     for (const asset of myAssets) {
       if (asset.type === 'player') {
         const player = asset.data as Player;
-        const realPlayer = allPlayers.find(p => p.pid === player.pid);
-        if (realPlayer) {
-          realPlayer.tid = selectedTeam.tid;
-        }
-      }
-    }
-
-    for (const asset of theirAssets) {
-      if (asset.type === 'player') {
-        const player = asset.data as Player;
-        const realPlayer = allPlayers.find(p => p.pid === player.pid);
-        if (realPlayer) {
-          realPlayer.tid = team.tid;
-        }
-      }
-    }
-
-    // Execute trade on draft picks
-    for (const asset of myAssets) {
-      if (asset.type === 'pick') {
+        engine.transferPlayer(player.pid, selectedTeam.tid);
+      } else if (asset.type === 'pick') {
         const pick = asset.data as DraftPick;
         engine.tradeDraftPick(pick.dpid, team.tid, selectedTeam.tid);
       }
     }
 
     for (const asset of theirAssets) {
-      if (asset.type === 'pick') {
+      if (asset.type === 'player') {
+        const player = asset.data as Player;
+        engine.transferPlayer(player.pid, team.tid);
+      } else if (asset.type === 'pick') {
         const pick = asset.data as DraftPick;
         engine.tradeDraftPick(pick.dpid, selectedTeam.tid, team.tid);
       }
@@ -309,7 +274,7 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
                       </thead>
                       <tbody>
                         {myTeamPlayers
-                          .filter(p => isPlayerTradable(p))
+                          .filter(p => engine.isPlayerTradable(p))
                           .map(p => {
                             const isSelected = myAssets.some(
                               a => a.type === 'player' && (a.data as Player).pid === p.pid
@@ -334,7 +299,7 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
                                           {
                                             type: 'player',
                                             data: p,
-                                            value: calculatePlayerValue(p, season),
+                                            value: engine.getPlayerTradeValue(p),
                                           },
                                           true
                                         );
@@ -371,7 +336,7 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
                             const isSelected = myAssets.some(
                               a => a.type === 'pick' && (a.data as DraftPick).dpid === pick.dpid
                             );
-                            const pickValue = calculatePickValue(pick);
+                            const pickValue = engine.getPickTradeValue(pick);
                             return (
                               <tr key={pick.dpid}>
                                 <td>
@@ -461,7 +426,7 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
                       </thead>
                       <tbody>
                         {theirTeamPlayers
-                          .filter(p => isPlayerTradable(p))
+                          .filter(p => engine.isPlayerTradable(p))
                           .map(p => {
                             const isSelected = theirAssets.some(
                               a => a.type === 'player' && (a.data as Player).pid === p.pid
@@ -484,7 +449,7 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
                                           {
                                             type: 'player',
                                             data: p,
-                                            value: calculatePlayerValue(p, season),
+                                            value: engine.getPlayerTradeValue(p),
                                           },
                                           false
                                         );
@@ -521,7 +486,7 @@ function TradeCenter({ team, players, onTradeComplete }: TradeCenterProps) {
                             const isSelected = theirAssets.some(
                               a => a.type === 'pick' && (a.data as DraftPick).dpid === pick.dpid
                             );
-                            const pickValue = calculatePickValue(pick);
+                            const pickValue = engine.getPickTradeValue(pick);
                             return (
                               <tr key={pick.dpid}>
                                 <td>

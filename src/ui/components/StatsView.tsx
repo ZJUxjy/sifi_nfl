@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Table, Card, Tabs, Tab, Badge, Form, Row, Col } from 'react-bootstrap';
 import { useGameStore } from '../stores/gameStore';
-import { getStatsManager } from '@worker/core/stats/StatsManager';
+import { getGameEngine } from '../../worker/api';
 import type { PlayerSeasonStats } from '@common/stats';
 import type { Position } from '@common/types';
 
@@ -90,12 +90,12 @@ function StatsView() {
   const [teamFilter, setTeamFilter] = useState<number | 'all'>('all');
   const [positionFilter, setPositionFilter] = useState<Position | 'all'>('all');
 
-  const statsManager = getStatsManager(season);
+  const engine = getGameEngine();
 
   // Get all player stats
   const allStats = useMemo(() => {
-    return statsManager.getAllPlayerStats().filter(s => !s.playoffs);
-  }, [statsManager, season]);
+    return engine.getAllPlayerStats(season).filter(s => !s.playoffs);
+  }, [engine, season]);
 
   // Filter and sort stats based on category
   const displayStats = useMemo(() => {

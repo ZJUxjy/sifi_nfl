@@ -3,14 +3,7 @@ import { Card, Table, Button, Badge, Tabs, Tab, Alert, Row, Col } from 'react-bo
 import { useGameStore } from '../stores/gameStore';
 import { getGameEngine } from '../../worker/api';
 import type { Team } from '@common/entities';
-import {
-  generateSingleEliminationBracket,
-  generateDoubleEliminationBracket,
-  advanceSingleEliminationRound,
-  isPlayoffComplete,
-  type PlayoffBracket,
-  type PlayoffMatchup,
-} from '@worker/core/playoffs';
+import type { PlayoffBracket, PlayoffMatchup } from '../../worker/api/types';
 
 interface PlayoffsViewProps {
   // No props needed - uses global state
@@ -19,7 +12,7 @@ interface PlayoffsViewProps {
 type RegionKey = 'firstContinent' | 'secondContinent' | 'originContinent' | 'miningIsland';
 
 function PlayoffsView({}: PlayoffsViewProps) {
-  const { season, teams, players, phase } = useGameStore();
+  const { season, teams, phase } = useGameStore();
   const engine = getGameEngine();
   const [activeRegion, setActiveRegion] = useState<RegionKey>('firstContinent');
   const [brackets, setBrackets] = useState<Map<RegionKey, PlayoffBracket>>(new Map());
@@ -57,10 +50,10 @@ function PlayoffsView({}: PlayoffsViewProps) {
 
     if (region === 'originContinent') {
       // Origin uses double elimination (but we'll display as single for simplicity)
-      bracket = generateSingleEliminationBracket(teams.slice(0, 8), region, season);
+      bracket = engine.generateSingleEliminationBracket(teams.slice(0, 8), region);
     } else {
       // First/Second Continent use single elimination with byes
-      bracket = generateSingleEliminationBracket(teams, region, season);
+      bracket = engine.generateSingleEliminationBracket(teams, region);
     }
 
     setBrackets(prev => new Map(prev).set(region, bracket));
@@ -69,14 +62,9 @@ function PlayoffsView({}: PlayoffsViewProps) {
   // Get current bracket for active region
   const currentBracket = brackets.get(activeRegion);
 
-  // Simulate one round of playoffs
   const simulateRound = () => {
     if (!currentBracket) return;
-
-    const allPlayers = players;
-    advanceSingleEliminationRound(currentBracket, allPlayers, season);
-
-    // Force re-render
+    engine.advanceSingleEliminationRound(currentBracket);
     setBrackets(prev => new Map(prev).set(activeRegion, { ...currentBracket }));
   };
 
@@ -196,7 +184,7 @@ function PlayoffsView({}: PlayoffsViewProps) {
             <h4>Playoffs - Season {season}</h4>
           </Col>
           <Col xs="auto">
-            {currentBracket && !isPlayoffComplete(currentBracket) && (
+            {currentBracket && !engine.isPlayoffComplete(currentBracket) && (
               <Button variant="primary" onClick={simulateRound}>
                 Sim Round
               </Button>

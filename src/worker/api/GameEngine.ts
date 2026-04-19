@@ -37,6 +37,7 @@ import {
   selectPlayer as doSelectPlayer,
   getEligiblePlayersForOriginDraft,
 } from '../core/draft';
+import type { DraftProspect as InternalDraftProspect } from '../core/draft';
 import {
   isImperialCupYear as doIsImperialCupYear,
   getNextImperialCupYear as doGetNextImperialCupYear,
@@ -1097,8 +1098,8 @@ export class GameEngine {
   }
 
   // -- Draft --
-  generateDraftPool(numProspects: number): DraftProspect[] {
-    return doGenerateDraftPool(this.state.season, numProspects) as unknown as DraftProspect[];
+  generateDraftPool(numProspects: number): InternalDraftProspect[] {
+    return doGenerateDraftPool(this.state.season, numProspects);
   }
 
   /**
@@ -1114,7 +1115,7 @@ export class GameEngine {
 
   selectDraftedPlayer(
     teamTid: number,
-    prospect: DraftProspect,
+    prospect: InternalDraftProspect,
     pick: { round: number; pick: number; teamTid: number; teamName: string }
   ): Player {
     const dpick: DraftPick = {
@@ -1125,7 +1126,7 @@ export class GameEngine {
       pick: pick.pick,
       season: this.state.season,
     };
-    return doSelectPlayer(teamTid, prospect as any, dpick, this.state.season);
+    return doSelectPlayer(teamTid, prospect, dpick, this.state.season);
   }
 
   // -- Free Agency --

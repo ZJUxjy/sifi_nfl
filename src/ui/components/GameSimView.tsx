@@ -1,14 +1,10 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { Card, Button, ButtonGroup, Form, Alert, Spinner, Row, Col } from 'react-bootstrap';
-import { GameSim } from '@worker/core/game/GameSim';
-import { calculateCompositeRatings } from '@worker/core/player/ovr';
-import { getStatsManager } from '@worker/core/stats/StatsManager';
-import { useGameStore } from '../stores/gameStore';
+import { Card, Button, ButtonGroup, Alert, Spinner, Row, Col } from 'react-bootstrap';
+import { getGameEngine } from '../../worker/api';
 import type {
-  TeamGameSim,
-  PlayerGameSim,
   TeamNum,
   PlayByPlayEvent,
+  GameSim,
 } from '@worker/api/types';
 import type { Team, Player } from '@common/entities';
 import Scoreboard from './Scoreboard';
@@ -26,71 +22,8 @@ interface GameSimViewProps {
   onBack?: () => void;
 }
 
-// Convert Player to PlayerGameSim format
-function convertPlayerToGameSim(player: Player): PlayerGameSim {
-  const compositeRating = calculateCompositeRatings(player);
-
-  return {
-    pid: player.pid,
-    name: player.name,
-    pos: player.pos,
-    hgt: player.hgt,
-    stre: player.stre,
-    spd: player.spd,
-    endu: player.endu,
-    thv: player.thv,
-    thp: player.thp,
-    tha: player.tha,
-    bsc: player.bsc,
-    elu: player.elu,
-    rtr: player.rtr,
-    hnd: player.hnd,
-    rbk: player.rbk,
-    pbk: player.pbk,
-    pcv: player.pcv,
-    tck: player.tck,
-    prs: player.prs,
-    rns: player.rns,
-    kpw: player.kpw,
-    kac: player.kac,
-    ppw: player.ppw,
-    pac: player.pac,
-    fuzz: player.fuzz,
-    ovr: player.ovr,
-    pot: player.pot,
-    stat: {},
-    compositeRating: compositeRating as any,
-    energy: 100,
-    ptModifier: 1,
-    injury: player.injury,
-  };
-}
-
-// Convert Team to TeamGameSim format
-function convertTeamToGameSim(team: Team, players: Player[]): TeamGameSim {
-  const gameSimPlayers = players.map(convertPlayerToGameSim);
-
-  // Build depth chart
-  const depth: Record<string, PlayerGameSim[]> = {};
-  const positions = ['QB', 'RB', 'WR', 'TE', 'OL', 'DL', 'LB', 'CB', 'S', 'K', 'P', 'KR', 'PR'];
-
-  for (const pos of positions) {
-    depth[pos] = gameSimPlayers
-      .filter(p => p.pos === pos)
-      .sort((a, b) => b.ovr - a.ovr);
-  }
-
-  return {
-    id: team.tid,
-    stat: { pts: 0 },
-    player: gameSimPlayers,
-    compositeRating: {},
-    depth,
-  };
-}
-
 function GameSimView({ homeTeam, awayTeam, homePlayers, awayPlayers, onComplete, onBack }: GameSimViewProps) {
-  const { season } = useGameStore();
+  const engine = getGameEngine();
   const [gameState, setGameState] = useState<'pregame' | 'playing' | 'paused' | 'complete'>('pregame');
   const [speed, setSpeed] = useState<SpeedSetting>('normal');
   const [quarter, setQuarter] = useState(1);
@@ -112,23 +45,15 @@ function GameSimView({ homeTeam, awayTeam, homePlayers, awayPlayers, onComplete,
   const teamNames: [string, string] = [homeTeam.name, awayTeam.name];
   const teamColors: [[string, string, string], [string, string, string]] = [homeTeam.colors, awayTeam.colors];
 
-  // Initialize game
   const initializeGame = useCallback(() => {
-    const homeTeamSim = convertTeamToGameSim(homeTeam, homePlayers);
-    const awayTeamSim = convertTeamToGameSim(awayTeam, awayPlayers);
-
-    // Get the StatsManager for tracking player statistics
-    const statsManager = getStatsManager(season);
-
-    const game = new GameSim({
-      gid: Date.now(),
-      day: 1,
-      teams: [homeTeamSim, awayTeamSim],
+    const game = engine.createGameSim({
+      homeTeam,
+      awayTeam,
+      homePlayers,
+      awayPlayers,
       quarterLength: 15,
       numPeriods: 4,
-      statsManager,
-      playoffs: false, // Regular season game
-      season,
+      playoffs: false,
     });
 
     setGameSim(game);
@@ -140,7 +65,7 @@ function GameSimView({ homeTeam, awayTeam, homePlayers, awayPlayers, onComplete,
     setToGo(undefined);
     setScrimmage(undefined);
     setIsOvertime(false);
-  }, [homeTeam, awayTeam, homePlayers, awayPlayers]);
+  }, [homeTeam, awayTeam, homePlayers, awayPlayers, engine]);
 
   // Run simulation loop
   const runSimulationStep = useCallback(() => {
