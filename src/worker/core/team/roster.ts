@@ -24,6 +24,8 @@ export function populateDepthChart(team: Team, players: Player[]): Record<Positi
       S: 5,
       K: 2,
       P: 2,
+      KR: 1,
+      PR: 1,
     };
 
     depth[pos] = posPlayers.slice(0, maxDepth[pos] ?? 3);
