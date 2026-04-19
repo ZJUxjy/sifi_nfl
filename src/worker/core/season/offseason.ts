@@ -42,6 +42,78 @@ const MIN_ROSTER_SIZE = 25;
 const MAX_ROSTER_SIZE = 53;
 const PRACTICE_SQUAD_SIZE = 16;
 
+// Mining Island has 4 stacked divisions; design says the bottom 3 of
+// each tier swap with the top 3 of the tier directly below.
+const PROMOTION_COUNT = 3;
+
+export type TierMove = {
+  tid: number;
+  fromTier: number;
+  toTier: number;
+};
+
+export type PromotionRelegationResult = {
+  promoted: TierMove[];
+  relegated: TierMove[];
+};
+
+/**
+ * Apply Mining Island promotion / relegation in place.
+ *
+ * For every adjacent pair of populated tiers (1<->2, 2<->3, ...), the
+ * bottom {@link PROMOTION_COUNT} teams of the upper tier (sorted by
+ * `won` ascending) trade `tier` fields with the top
+ * {@link PROMOTION_COUNT} teams of the lower tier (sorted by `won`
+ * descending). Non-contiguous tier numbers (e.g. only tier 1 and 3
+ * exist) are NOT bridged; teams stay where they are.
+ *
+ * Mutates `teams` and returns lists describing every swap.
+ */
+export function promoteRelegateMiningIsland(teams: Team[]): PromotionRelegationResult {
+  const promoted: TierMove[] = [];
+  const relegated: TierMove[] = [];
+
+  const populatedTiers = [...new Set(teams.map(t => t.tier).filter((x): x is number => typeof x === 'number'))]
+    .sort((a, b) => a - b);
+
+  // Snapshot the tier assignments first so that a team that is just
+  // promoted out of, say, tier 2 isn't immediately re-considered as
+  // a "tier 2 team" when we process the 2<->3 boundary.
+  const originalTier = new Map<number, number>();
+  for (const t of teams) {
+    if (typeof t.tier === 'number') {
+      originalTier.set(t.tid, t.tier);
+    }
+  }
+
+  for (let i = 0; i < populatedTiers.length - 1; i++) {
+    const upperTier = populatedTiers[i];
+    const lowerTier = populatedTiers[i + 1];
+    if (lowerTier !== upperTier + 1) {
+      continue;
+    }
+
+    const upper = teams
+      .filter(t => originalTier.get(t.tid) === upperTier)
+      .sort((a, b) => a.won - b.won);
+    const lower = teams
+      .filter(t => originalTier.get(t.tid) === lowerTier)
+      .sort((a, b) => b.won - a.won);
+    const swaps = Math.min(PROMOTION_COUNT, upper.length, lower.length);
+
+    for (let k = 0; k < swaps; k++) {
+      const demoted = upper[k];
+      const elevated = lower[k];
+      demoted.tier = lowerTier;
+      elevated.tier = upperTier;
+      relegated.push({ tid: demoted.tid, fromTier: upperTier, toTier: lowerTier });
+      promoted.push({ tid: elevated.tid, fromTier: lowerTier, toTier: upperTier });
+    }
+  }
+
+  return { promoted, relegated };
+}
+
 export type OffseasonEvent = {
   type: 'retirement' | 'contractExpired' | 'signed' | 'released' | 'drafted' | 'promoted' | 'relegated';
   playerPid?: number;
@@ -434,55 +506,43 @@ export class OffseasonManager {
     const promotedTeams: { tid: number; from: string; to: string }[] = [];
     const relegatedTeams: { tid: number; from: string; to: string }[] = [];
 
-    // Mining Island promotion/relegation
+    // Mining Island promotion/relegation - run on the canonical
+    // tier ladder via the pure helper, then translate the result
+    // into the public {tid, from, to} shape and push events.
     const miningTeams = this.teams.filter(t => t.region === 'miningIsland');
     if (miningTeams.length > 0) {
-      // Sort by performance
-      const sorted = [...miningTeams].sort((a, b) => {
-        const aPct = a.won ? a.won / (a.won + (a.lost || 0) + 0.001) : 0;
-        const bPct = b.won ? b.won / (b.won + (b.lost || 0) + 0.001) : 0;
-        return bPct - aPct;
-      });
+      const { promoted, relegated } = promoteRelegateMiningIsland(miningTeams);
 
-      // Simple promotion (top 3 from lower tiers) and relegation (bottom 3)
-      // This is a simplified version - the real structure is more complex
-      const promoteCount = Math.min(3, Math.floor(sorted.length / 4));
-      const relegateCount = promoteCount;
-
-      for (let i = 0; i < promoteCount; i++) {
-        const team = sorted[sorted.length - 1 - i]; // From lower tier
-        if (team) {
-          promotedTeams.push({
-            tid: team.tid,
-            from: 'lower tier',
-            to: 'upper tier',
-          });
-          this.events.push({
-            type: 'promoted',
-            teamTid: team.tid,
-            teamName: team.name,
-            details: 'Promoted to higher tier',
-            season: this.season,
-          });
-        }
+      for (const move of promoted) {
+        const team = miningTeams.find(t => t.tid === move.tid)!;
+        promotedTeams.push({
+          tid: move.tid,
+          from: `tier ${move.fromTier}`,
+          to: `tier ${move.toTier}`,
+        });
+        this.events.push({
+          type: 'promoted',
+          teamTid: move.tid,
+          teamName: team.name,
+          details: `Promoted from tier ${move.fromTier} to tier ${move.toTier}`,
+          season: this.season,
+        });
       }
 
-      for (let i = 0; i < relegateCount; i++) {
-        const team = sorted[i]; // From upper tier
-        if (team) {
-          relegatedTeams.push({
-            tid: team.tid,
-            from: 'upper tier',
-            to: 'lower tier',
-          });
-          this.events.push({
-            type: 'relegated',
-            teamTid: team.tid,
-            teamName: team.name,
-            details: 'Relegated to lower tier',
-            season: this.season,
-          });
-        }
+      for (const move of relegated) {
+        const team = miningTeams.find(t => t.tid === move.tid)!;
+        relegatedTeams.push({
+          tid: move.tid,
+          from: `tier ${move.fromTier}`,
+          to: `tier ${move.toTier}`,
+        });
+        this.events.push({
+          type: 'relegated',
+          teamTid: move.tid,
+          teamName: team.name,
+          details: `Relegated from tier ${move.fromTier} to tier ${move.toTier}`,
+          season: this.season,
+        });
       }
     }
 
