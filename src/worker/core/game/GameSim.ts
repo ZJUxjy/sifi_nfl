@@ -1238,6 +1238,16 @@ export class GameSim {
     }
   }
 
+  /**
+   * A player counts as "available" for lineup purposes when they have no
+   * active injury record, or their recovery counter has already reached 0
+   * (mirrors `isPlayerAvailable` in core/game/injuries.ts so the two
+   * never disagree about who is on the inactive list).
+   */
+  private isAvailable(p: PlayerGameSim): boolean {
+    return !p.injury || p.injury.gamesRemaining <= 0;
+  }
+
   getPlayer(team: TeamNum, pos: string): PlayerGameSim {
     const t = this.team[team];
     if (!t) {
@@ -1245,12 +1255,31 @@ export class GameSim {
         `getPlayer called with invalid team ${team} (o=${this.o}, d=${this.d}, awaitingKickoff=${this.awaitingKickoff}, awaitingAfterSafety=${this.awaitingAfterSafety})`,
       );
     }
-    const players = t.player.filter(p => p.pos === pos);
-    return players[0] || t.player[0];
+    const matching = t.player.filter(p => p.pos === pos);
+    // Prefer healthy players at the requested position. If the entire
+    // depth chart at this position is hurt, fall back to the injured
+    // starter (better than handing the snap to a P or K) — and if the
+    // team has nobody at this position at all, fall back to the first
+    // available player team-wide, then finally the first player.
+    const healthyAtPos = matching.filter(p => this.isAvailable(p));
+    if (healthyAtPos.length > 0) return healthyAtPos[0];
+    if (matching.length > 0) return matching[0];
+    const anyHealthy = t.player.filter(p => this.isAvailable(p));
+    return anyHealthy[0] || t.player[0];
   }
 
   getPlayers(team: TeamNum, positions: string[]): PlayerGameSim[] {
-    return this.team[team].player.filter(p => positions.includes(p.pos));
+    const matching = this.team[team].player.filter(p =>
+      positions.includes(p.pos),
+    );
+    // Demote injured players out of the active rotation. Defensive
+    // fallback: if filtering would empty the unit (e.g. the entire DL/LB
+    // depth chart is on IR), keep the injured players in so downstream
+    // composite calculations don't divide by zero (matches the C1
+    // passRushers contract — the caller's own `if (length === 0)` branch
+    // is only reached when the position group is genuinely missing).
+    const healthy = matching.filter(p => this.isAvailable(p));
+    return healthy.length > 0 ? healthy : matching;
   }
 
   recordStat(team: TeamNum, player: PlayerGameSim | undefined, stat: string, value: number = 1): void {
