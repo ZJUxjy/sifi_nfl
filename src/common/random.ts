@@ -64,7 +64,7 @@ export function truncGauss(mean: number, sd: number, min?: number, max?: number)
   return Math.round(result);
 }
 
-export function sample<T>(array: T[], num?: number): T[] {
+export function sample<T>(array: readonly T[], num?: number): T[] {
   if (!num || num >= array.length) {
     return [...array];
   }
@@ -72,11 +72,11 @@ export function sample<T>(array: T[], num?: number): T[] {
   return shuffled.slice(0, num);
 }
 
-export function choice<T>(array: T[]): T {
+export function choice<T>(array: readonly T[]): T {
   return array[Math.floor(next() * array.length)];
 }
 
-export function shuffle<T>(array: T[]): T[] {
+export function shuffle<T>(array: readonly T[]): T[] {
   const result = [...array];
   for (let i = result.length - 1; i > 0; i--) {
     const j = Math.floor(next() * (i + 1));
