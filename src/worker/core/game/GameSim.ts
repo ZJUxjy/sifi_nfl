@@ -160,7 +160,7 @@ export class GameSim {
   }
 
   simOvertime(): void {
-    this.overtimeState = 'initial';
+    this.overtimeState = 'initial' as typeof this.overtimeState;
     this.clock = 10;
     this.quarter = this.numPeriods + this.overtimes + 1;
     
@@ -320,7 +320,7 @@ export class GameSim {
     if (Math.random() > completionProb) {
       const defender = Math.random() < 0.3 ? choice(defenders) : undefined;
       
-      if (defensivePenalty && defensivePenalty.info.type === 'defensivePassInterference') {
+      if (defensivePenalty && defensivePenalty.type === 'defensivePassInterference') {
         defensivePenalty.spotYards = Math.round(truncGauss(15, 5, 5, 40));
         this.processPenalty(defensivePenalty, defensivePenalty.spotYards, false);
         return;
@@ -647,6 +647,9 @@ export class GameSim {
     this.team[this.o].stat.pts += 6;
     this.awaitingAfterTouchdown = true;
     this.isClockRunning = false;
+    if (this.overtimeState !== undefined) {
+      this.overtimeState = 'over';
+    }
   }
 
   scoreSafety(): void {
