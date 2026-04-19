@@ -1051,10 +1051,16 @@ export class GameEngine {
         }
       }
 
+      // FL8: pass the canonical draftPicks ledger through. runDraft()
+      // consumes it (sorted by round + pick) and credits each pick to
+      // its current holder (`pick.tid`, post-trade) instead of running
+      // a record-sorted round-robin that silently undid every traded
+      // pick the moment the offseason fired.
       const offseasonManager = new OffseasonManager(
         this.state.players,
         this.state.teams,
-        this.state.season
+        this.state.season,
+        this.state.draftPicks
       );
 
       const result = offseasonManager.runOffseason();
@@ -1062,6 +1068,11 @@ export class GameEngine {
       // Update state with new season data
       this.state.players = offseasonManager.getPlayers();
       this.state.teams = offseasonManager.getTeams();
+      // Pull the (now annotated: played=true / playerPid=…) pick
+      // ledger back so anyone reading state.draftPicks afterwards sees
+      // the consumed picks until initializeDraftPicks() rolls a fresh
+      // set for the new season below.
+      this.state.draftPicks = offseasonManager.getDraftPicks();
       this.state.season = result.newSeason;
       this.state.week = 1;
       this.state.phase = 2; // Regular season

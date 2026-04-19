@@ -129,6 +129,14 @@ export type DraftPick = {
   pick: number;
   season: number | 'originDraft';
   note?: string;
+  // FL8: set to true once OffseasonManager.runDraft consumes this pick,
+  // and `playerPid` is the prospect that was selected. Picks marked
+  // played are skipped on subsequent runDraft passes so re-running the
+  // offseason can never double-pick a slot. Both fields are optional
+  // because legacy save files (and freshly generated picks) won't have
+  // them set.
+  played?: boolean;
+  playerPid?: number;
 };
 
 export type PlayerStats = {

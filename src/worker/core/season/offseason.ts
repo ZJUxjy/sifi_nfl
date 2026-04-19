@@ -13,14 +13,14 @@
 
 import type { Player } from '@common/entities';
 import type { Team } from '@common/entities';
-import type { Region, Contract } from '@common/types';
+import type { Region, Contract, DraftPick } from '@common/types';
 import { develop } from '../player/generate';
 import {
   processRetirements,
   getRetirementReason,
   calculateHallOfFameChance,
 } from '../player/retirement';
-import { generateDraftPool } from '../draft';
+import { generateDraftPool, generateDraftPicks } from '../draft';
 import { generateFreeAgentPool } from '../freeAgent';
 import type { TeamFinances } from '../../api/types';
 
@@ -158,11 +158,32 @@ export class OffseasonManager {
   private teams: Team[];
   private season: number;
   private events: OffseasonEvent[] = [];
+  // FL8: canonical pick ledger for the season being closed out. The
+  // offseason draft selects strictly from this list (sorted by round +
+  // intra-round pick) and credits each prospect to `pick.tid` (the
+  // *current* holder, post-trade) — not to the original team. May be
+  // omitted by callers; we'll bootstrap a fresh round-robin set from
+  // standings if so, so direct unit tests of the manager keep working.
+  private draftPicks: DraftPick[];
 
-  constructor(players: Player[], teams: Team[], season: number) {
+  constructor(
+    players: Player[],
+    teams: Team[],
+    season: number,
+    draftPicks: DraftPick[] = []
+  ) {
     this.players = players;
     this.teams = teams;
     this.season = season;
+    this.draftPicks = draftPicks;
+  }
+
+  /**
+   * Expose draftPicks so callers (GameEngine) can re-sync state with
+   * the played/playerPid annotations runDraft writes back.
+   */
+  getDraftPicks(): DraftPick[] {
+    return this.draftPicks;
   }
 
   /**
@@ -469,7 +490,18 @@ export class OffseasonManager {
   }
 
   /**
-   * Run the draft
+   * Run the draft.
+   *
+   * FL8: source of truth is `this.draftPicks`, the canonical per-season
+   * ledger that records who *currently* owns each pick (`pick.tid`,
+   * mutated by trade/executeTrade) versus who originally owned it
+   * (`pick.originalTid`). Every selection is credited to `pick.tid` and
+   * the pick is annotated `played = true` + `playerPid = …` so a
+   * replayed offseason can never pick the same slot twice.
+   *
+   * The previous round-robin path (sort teams by record, give each one
+   * a pick per round) ignored draftPicks entirely, which silently undid
+   * any in-season trade of a future pick the moment the offseason ran.
    */
   private runDraft(): Player[] {
     console.log('Running draft...');
@@ -483,51 +515,103 @@ export class OffseasonManager {
       return [];
     }
 
-    // Generate draft pool
-    const draftPool = generateDraftPool(this.season + 1, 224);
+    // Bootstrap a pick ledger if no caller supplied one (direct unit
+    // tests of OffseasonManager) so the new code path is the *only*
+    // code path. Use the same generator GameEngine.initializeDraftPicks
+    // does, anchored to the season being closed out.
+    let pickLedger = this.draftPicks.filter(
+      p => p.season === this.season && !p.played
+    );
+    if (pickLedger.length === 0 && this.draftPicks.length === 0) {
+      const generated = generateDraftPicks(
+        draftTeams.map(t => ({
+          tid: t.tid,
+          region: t.region,
+          won: t.won || 0,
+          lost: t.lost || 0,
+        })),
+        this.season,
+        7
+      );
+      this.draftPicks.push(...generated);
+      pickLedger = generated;
+    }
 
-    // Get draft order based on standings (worst first)
-    const draftOrder = [...draftTeams].sort((a, b) => {
-      const aWins = a.won || 0;
-      const bWins = b.won || 0;
-      return aWins - bWins; // Worst record picks first
-    });
+    if (pickLedger.length === 0) {
+      console.log('Drafted 0 players (no unplayed picks for this season)');
+      return [];
+    }
 
+    const draftTeamIds = new Set(draftTeams.map(t => t.tid));
+
+    // Generate the prospect pool. Use a size that can never starve the
+    // pick ledger (32-team / 7-round leagues need 224 prospects; for
+    // shorter leagues we still need at least one prospect per pick).
+    const poolSize = Math.max(224, pickLedger.length);
+    const draftPool = generateDraftPool(this.season + 1, poolSize);
+
+    // Walk picks in canonical draft order: round ascending, then
+    // intra-round pick index ascending.
+    const ordered = [...pickLedger].sort(
+      (a, b) => a.round - b.round || a.pick - b.pick
+    );
+
+    const drafted = new Set<number>();
     const draftedPlayers: Player[] = [];
 
-    // Simulate 7 rounds
-    for (let round = 1; round <= 7; round++) {
-      for (const team of draftOrder) {
-        // Get best available player
-        const bestAvailable = draftPool
-          .filter(p => !p.tid)
-          .sort((a, b) => (b.ovr || 0) - (a.ovr || 0))[0];
+    for (const pick of ordered) {
+      // Defensive: a pick whose current holder isn't in the draft set
+      // (e.g. relegated team that lost its draft seat) is still consumed
+      // so we don't loop forever, but we don't materialise a player.
+      if (!draftTeamIds.has(pick.tid)) {
+        pick.played = true;
+        continue;
+      }
 
-        if (bestAvailable) {
-          bestAvailable.tid = team.tid;
-          const contractAmount = Math.round(800000 + (8 - round) * 100000);
-          // Drafted rookies start playing in newSeason; anchor exp there.
-          bestAvailable.contract = createContract(contractAmount, 4, this.season + 1);
-          bestAvailable.draft = {
-            ...bestAvailable.draft,
-            tid: team.tid,
-            round,
-            pick: (round - 1) * draftOrder.length + draftOrder.indexOf(team) + 1,
-          };
-
-          draftedPlayers.push(bestAvailable);
-
-          this.events.push({
-            type: 'drafted',
-            playerPid: bestAvailable.pid,
-            playerName: bestAvailable.name,
-            teamTid: team.tid,
-            teamName: team.name,
-            details: `Round ${round}, Pick ${draftOrder.indexOf(team) + 1}`,
-            season: this.season,
-          });
+      // Pick the highest-rated prospect not yet selected. We use an
+      // explicit `drafted` set rather than `!p.tid` because tid===0 is
+      // a valid team id and the truthiness filter would let team 0's
+      // earlier selections re-enter the pool.
+      let bestAvailable: Player | undefined;
+      let bestScore = -Infinity;
+      for (const prospect of draftPool) {
+        if (drafted.has(prospect.pid)) continue;
+        const score = prospect.ovr || 0;
+        if (score > bestScore) {
+          bestScore = score;
+          bestAvailable = prospect;
         }
       }
+      if (!bestAvailable) break;
+
+      drafted.add(bestAvailable.pid);
+      const team = draftTeams.find(t => t.tid === pick.tid)!;
+      bestAvailable.tid = pick.tid;
+      const contractAmount = Math.round(800000 + (8 - pick.round) * 100000);
+      // Drafted rookies start playing in newSeason; anchor exp there.
+      bestAvailable.contract = createContract(contractAmount, 4, this.season + 1);
+      bestAvailable.draft = {
+        ...bestAvailable.draft,
+        tid: pick.tid,
+        originalTid: pick.originalTid,
+        round: pick.round,
+        pick: pick.pick,
+      };
+
+      pick.played = true;
+      pick.playerPid = bestAvailable.pid;
+
+      draftedPlayers.push(bestAvailable);
+
+      this.events.push({
+        type: 'drafted',
+        playerPid: bestAvailable.pid,
+        playerName: bestAvailable.name,
+        teamTid: pick.tid,
+        teamName: team.name,
+        details: `Round ${pick.round}, Pick ${pick.pick}`,
+        season: this.season,
+      });
     }
 
     // Add drafted players to main player list
